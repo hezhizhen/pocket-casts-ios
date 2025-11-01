@@ -127,8 +127,8 @@ class EpisodeDetailsViewModel: EpisodeViewModel {
     }
 
     func handleEpisodeAction(_ action: EpisodeAction, wasConfirmed: Bool = false, dismiss: () -> Void) {
-        let recievedConfirmation = !playSourceViewModel.requiresConfirmation(forAction: action) || wasConfirmed
-        guard recievedConfirmation else {
+        let receivedConfirmation = !playSourceViewModel.requiresConfirmation(forAction: action) || wasConfirmed
+        guard receivedConfirmation else {
             actionRequiresConfirmation = action
             return
         }
