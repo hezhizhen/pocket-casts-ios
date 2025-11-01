@@ -87,7 +87,7 @@ class PlaylistViewController: PCViewController, TitleButtonDelegate {
                 self.setupNavBar()
                 self.tableView.beginUpdates()
                 self.tableView.setEditing(self.isMultiSelectEnabled, animated: true)
-                self.tableView.updateContentInset(multiSelectEnabled: self.isMultiSelectEnabled)
+                self.insetAdjuster.isMultiSelectEnabled = isMultiSelectEnabled
                 self.tableView.endUpdates()
 
                 if self.isMultiSelectEnabled {
@@ -133,6 +133,15 @@ class PlaylistViewController: PCViewController, TitleButtonDelegate {
 
     var cellHeights: [IndexPath: CGFloat] = [:]
 
+    private var loadingIndicator: ThemeLoadingIndicator! {
+        didSet {
+            view.addSubview(loadingIndicator)
+            loadingIndicator.center = view.center
+        }
+    }
+
+    private var firstTimeLoading = true
+
     // MARK: - View Methods
 
     override func viewDidLoad() {
@@ -146,6 +155,8 @@ class PlaylistViewController: PCViewController, TitleButtonDelegate {
         tableView.sectionFooterHeight = 0.0
         tableView.estimatedRowHeight = 80
         tableView.rowHeight = UITableView.automaticDimension
+
+        insetAdjuster.setupInsetAdjustmentsForMiniPlayer(scrollView: tableView)
 
         if let navController = navigationController {
             tableRefreshControl = PCRefreshControl(scrollView: tableView, navBar: navController.navigationBar, source: analyticsSource)
@@ -166,6 +177,8 @@ class PlaylistViewController: PCViewController, TitleButtonDelegate {
         filterCollectionView.filter = filter
 
         isChipHidden = !isNewFilter
+
+        loadingIndicator = ThemeLoadingIndicator()
 
         Analytics.track(.filterShown)
     }
@@ -190,7 +203,6 @@ class PlaylistViewController: PCViewController, TitleButtonDelegate {
         navigationController?.navigationBar.shadowImage = UIImage()
 
         addEventObservers()
-        miniPlayerStatusDidChange()
 
         tableRefreshControl?.parentViewControllerDidAppear()
         noEpisodesRefreshControl?.parentViewControllerDidAppear()
@@ -238,7 +250,7 @@ class PlaylistViewController: PCViewController, TitleButtonDelegate {
         addCustomObserver(Constants.Notifications.playbackTrackChanged, selector: #selector(refreshEpisodesFromNotification))
         addCustomObserver(Constants.Notifications.playbackEnded, selector: #selector(refreshEpisodesFromNotification))
         addCustomObserver(Constants.Notifications.playbackFailed, selector: #selector(refreshEpisodesFromNotification))
-        addCustomObserver(Constants.Notifications.filterChanged, selector: #selector(refreshFilterFromNotification))
+        addCustomObserver(Constants.Notifications.playlistChanged, selector: #selector(refreshFilterFromNotification))
         addCustomObserver(Constants.Notifications.upNextEpisodeRemoved, selector: #selector(refreshEpisodesFromNotification))
         addCustomObserver(Constants.Notifications.upNextEpisodeAdded, selector: #selector(refreshEpisodesFromNotification))
         addCustomObserver(Constants.Notifications.upNextQueueChanged, selector: #selector(refreshEpisodesFromNotification))
@@ -247,17 +259,24 @@ class PlaylistViewController: PCViewController, TitleButtonDelegate {
         addCustomObserver(Constants.Notifications.episodeStarredChanged, selector: #selector(refreshEpisodesFromNotification))
         addCustomObserver(Constants.Notifications.episodeDownloadStatusChanged, selector: #selector(refreshEpisodesFromNotification))
         addCustomObserver(Constants.Notifications.manyEpisodesChanged, selector: #selector(refreshEpisodesFromNotification))
-
-        addCustomObserver(Constants.Notifications.miniPlayerDidDisappear, selector: #selector(miniPlayerStatusDidChange))
-        addCustomObserver(Constants.Notifications.miniPlayerDidAppear, selector: #selector(miniPlayerStatusDidChange))
     }
 
     private func reloadFilterAndRefresh(animated: Bool = false) {
-        if let reloadedFilter = DataManager.sharedManager.findFilter(uuid: filter.uuid) {
-            filter = reloadedFilter
-            filterCollectionView.filter = reloadedFilter
+        if firstTimeLoading {
+            loadingIndicator.startAnimating()
         }
-        refreshEpisodes(animated: animated)
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { return }
+            if let reloadedFilter = DataManager.sharedManager.findPlaylist(uuid: filter.uuid) {
+                filter = reloadedFilter
+                DispatchQueue.main.async {
+                    self.filterCollectionView.filter = reloadedFilter
+                }
+            }
+
+            refreshEpisodes(animated: animated)
+        }
     }
 
     // MARK: - UIScrollView
@@ -284,19 +303,6 @@ class PlaylistViewController: PCViewController, TitleButtonDelegate {
         }
 
         selectedRefreshControl?.scrollViewDidEndDragging(scrollView)
-    }
-
-    @objc func miniPlayerStatusDidChange() {
-        updateTableViewContentOffset()
-        if isMultiSelectEnabled {
-            multiSelectFooterBottomConstraint.constant = PlaybackManager.shared.currentEpisode() == nil ? 16 : Constants.Values.miniPlayerOffset + 16
-        }
-    }
-
-    private func updateTableViewContentOffset() {
-        let multiSelectFooterOffset: CGFloat = isMultiSelectEnabled ? 80 : 0
-        let miniPlayerOffset: CGFloat = PlaybackManager.shared.currentEpisode() == nil ? 0 : Constants.Values.miniPlayerOffset
-        tableView.contentInset = UIEdgeInsets(top: 0, left: 0, bottom: miniPlayerOffset + multiSelectFooterOffset, right: 0)
     }
 
     @objc func moreTapped() {
@@ -326,7 +332,7 @@ class PlaylistViewController: PCViewController, TitleButtonDelegate {
             Analytics.track(.filterOptionsModalOptionTapped, properties: ["option": "play_all"])
             let playableEpisodeCount = min(ServerSettings.autoAddToUpNextLimit(), self.episodes.count)
             OptionsPickerHelper.playAllWarning(episodeCount: playableEpisodeCount, confirmAction: {
-                PlaybackManager.shared.play(filter: self.filter)
+                PlaybackManager.shared.play(playlist: self.filter)
             })
         }
 
@@ -346,7 +352,7 @@ class PlaylistViewController: PCViewController, TitleButtonDelegate {
             let confirmPicker = OptionsPicker(title: nil)
             var warningMessage = downloadLimitExceeded ? L10n.bulkDownloadMax : ""
 
-            if NetworkUtils.shared.isConnectedToWifi() {
+            if NetworkUtils.shared.isConnectedToUnexpensiveConnection() {
                 confirmPicker.addDescriptiveActions(title: L10n.downloadAll, message: warningMessage, icon: "filter_downloaded", actions: [downloadAction])
             } else {
                 downloadAction.destructive = true
@@ -356,10 +362,10 @@ class PlaylistViewController: PCViewController, TitleButtonDelegate {
                 }
 
                 if !Settings.mobileDataAllowed() {
-                    warningMessage = L10n.downloadDataWarning + "\n" + warningMessage
+                    warningMessage = L10n.downloadDataWarningWithSettingsLink("pktc://settings/storage-and-data") + "\n" + warningMessage
                 }
 
-                confirmPicker.addDescriptiveActions(title: L10n.notOnWifi, message: warningMessage, icon: "option-alert", actions: [downloadAction, queueAction])
+                confirmPicker.addAttributedDescriptiveActions(title: L10n.notOnWifi, message: warningMessage, icon: "option-alert", actions: [downloadAction, queueAction])
             }
             confirmPicker.show(statusBarStyle: AppTheme.defaultStatusBarStyle())
         }
@@ -400,8 +406,8 @@ class PlaylistViewController: PCViewController, TitleButtonDelegate {
 
     func saveFilter() {
         filter.syncStatus = SyncStatus.notSynced.rawValue
-        DataManager.sharedManager.save(filter: filter)
-        NotificationCenter.postOnMainThread(notification: Constants.Notifications.filterChanged, object: filter)
+        DataManager.sharedManager.save(playlist: filter)
+        NotificationCenter.postOnMainThread(notification: Constants.Notifications.playlistChanged, object: filter)
     }
 
     override func handleThemeChanged() {
@@ -476,8 +482,11 @@ class PlaylistViewController: PCViewController, TitleButtonDelegate {
     }
 
     func refreshEpisodes(animated: Bool) {
-        let refreshOperation = PlaylistRefreshOperation(tableView: tableView, filter: filter) { [weak self] newData in
+        let refreshOperation = PlaylistRefreshOperation(playlist: filter) { [weak self] newData in
             guard let strongSelf = self else { return }
+
+            strongSelf.firstTimeLoading = false
+            strongSelf.loadingIndicator.stopAnimating()
 
             strongSelf.tableView.isHidden = (newData.count == 0)
             if animated {

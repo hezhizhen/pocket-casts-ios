@@ -7,6 +7,8 @@ import SwiftUI
 
 extension PaidFeature {
     static var bookmarks: PaidFeature = .plusFeature
+    static var deselectChapters: PaidFeature = .plusFeature
+    static var slumber: PaidFeature = .plusFeature
 }
 
 /// A `PaidFeature` represents a feature that is unlocked with a subscription tier, and is considered to be unlocked if the tier
@@ -77,16 +79,16 @@ class PaidFeature: ObservableObject {
 
 // MARK: - Helpers
 
-#if !os(watchOS)
+#if !os(watchOS) && !APPCLIP
 extension PaidFeature {
     /// Returns the correct upgrade view controller for the feature
-    func upgradeController(source: String) -> UIViewController {
-        OnboardingFlow.shared.begin(flow: upgradeFlow, source: source)
+    func upgradeController(source: PlusUpgradeViewSource, customTitle: String? = nil) -> UIViewController {
+        OnboardingFlow.shared.begin(flow: upgradeFlow, source: source, customTitle: customTitle)
     }
 
     /// Presents the `upgradeController` from the given view controller
-    func presentUpgradeController(from controller: UIViewController, source: String) {
-        controller.presentFromRootController(upgradeController(source: source))
+    func presentUpgradeController(from controller: UIViewController, source: PlusUpgradeViewSource, customTitle: String? = nil) {
+        controller.presentFromRootController(upgradeController(source: source, customTitle: customTitle))
     }
 
     private var upgradeFlow: OnboardingFlow.Flow {

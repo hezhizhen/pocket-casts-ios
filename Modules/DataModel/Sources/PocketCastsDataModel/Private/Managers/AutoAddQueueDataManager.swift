@@ -1,16 +1,16 @@
-import FMDB
 import PocketCastsUtils
+import Foundation
 
 public struct AutoAddCandidatesDataManager {
-    private let dbQueue: FMDatabaseQueue
+    private let dbQueue: PCDBQueue
 
-    init(dbQueue: FMDatabaseQueue) {
+    init(dbQueue: PCDBQueue) {
         self.dbQueue = dbQueue
     }
 
     /// Adds a new auto add candidate to the database
     public func add(podcastUUID: String, episodeUUID: String) {
-        dbQueue.inDatabase { db in
+        dbQueue.write { db in
             do {
                 try db.executeUpdate("INSERT INTO \(Constants.tableName) (episode_uuid, podcast_uuid) VALUES (?, ?)", values: [episodeUUID, podcastUUID])
             } catch {
@@ -21,7 +21,7 @@ public struct AutoAddCandidatesDataManager {
 
     /// Removes a single candidate from the DB
     public func remove(_ candidate: AutoAddCandidate) {
-        dbQueue.inDatabase { db in
+        dbQueue.write { db in
             do {
                 try db.executeUpdate("""
                 DELETE FROM \(Constants.tableName) WHERE id = ? LIMIT 1
@@ -34,7 +34,7 @@ public struct AutoAddCandidatesDataManager {
 
     /// Reset the the entire candidates table
     public func clearAll() {
-        dbQueue.inDatabase { db in
+        dbQueue.write { db in
             do {
                 try db.executeUpdate("DELETE FROM \(Constants.tableName)", values: nil)
             } catch {
@@ -48,22 +48,42 @@ public struct AutoAddCandidatesDataManager {
     public func candidates() -> [AutoAddCandidate] {
         var results: [AutoAddCandidate] = []
 
-        dbQueue.inDatabase { db in
+        dbQueue.read { db in
             do {
-                let query = """
-                SELECT
-                    -- Get the Podcast Auto Add Setting
-                    podcast.autoAddToUpNext AS \(Constants.autoAddSettingColumnName),
 
-                    -- Get the episode UUID
-                    queue.id AS \(Constants.idColumnName),
-                    queue.episode_uuid AS \(Constants.episodeColumnName)
-                FROM
-                    \(Constants.tableName) AS queue
-                    JOIN \(DataManager.podcastTableName) AS podcast ON podcast.uuid = queue.podcast_uuid
-                -- Process the oldest items first
-                ORDER BY queue.id ASC
-                """
+                let query: String
+
+                if FeatureFlag.newSettingsStorage.enabled {
+                    query = """
+                    SELECT
+                        -- Get the Podcast Auto Add Setting
+                        json_extract(podcast.settings, '$.addToUpNextPosition.value') AS \(Constants.autoAddSettingColumnName),
+
+                        -- Get the episode UUID
+                        queue.id AS \(Constants.idColumnName),
+                        queue.episode_uuid AS \(Constants.episodeColumnName)
+                    FROM
+                        \(Constants.tableName) AS queue
+                        JOIN \(DataManager.podcastTableName) AS podcast ON podcast.uuid = queue.podcast_uuid
+                    -- Process the oldest items first
+                    ORDER BY queue.id ASC
+                    """
+                } else {
+                    query = """
+                    SELECT
+                        -- Get the Podcast Auto Add Setting
+                        podcast.autoAddToUpNext AS \(Constants.autoAddSettingColumnName),
+
+                        -- Get the episode UUID
+                        queue.id AS \(Constants.idColumnName),
+                        queue.episode_uuid AS \(Constants.episodeColumnName)
+                    FROM
+                        \(Constants.tableName) AS queue
+                        JOIN \(DataManager.podcastTableName) AS podcast ON podcast.uuid = queue.podcast_uuid
+                    -- Process the oldest items first
+                    ORDER BY queue.id ASC
+                    """
+                }
 
                 let resultSet = try db.executeQuery(query, values: nil)
 
@@ -94,8 +114,23 @@ public struct AutoAddCandidatesDataManager {
         /// The UUID of the candidate episode to add
         public let episodeUuid: String
 
-        init?(from resultSet: FMResultSet) {
-            let setting = resultSet.int(forColumn: Constants.autoAddSettingColumnName)
+        init?(from resultSet: PCDBResultSet) {
+
+            let setting: Int32
+            if FeatureFlag.newSettingsStorage.enabled {
+                let value = resultSet.int(forColumn: Constants.autoAddSettingColumnName)
+                let position = UpNextPosition(rawValue: value)
+                switch position {
+                case .top:
+                    setting = AutoAddToUpNextSetting.addFirst.rawValue
+                case .bottom:
+                    setting = AutoAddToUpNextSetting.addLast.rawValue
+                default:
+                    setting = AutoAddToUpNextSetting.off.rawValue
+                }
+            } else {
+                setting = resultSet.int(forColumn: Constants.autoAddSettingColumnName)
+            }
 
             guard
                 let idObj = resultSet.object(forColumn: Constants.idColumnName) as? NSNumber,
@@ -116,6 +151,7 @@ public struct AutoAddCandidatesDataManager {
     private enum Constants {
         static let tableName = "AutoAddCandidates"
         static let autoAddSettingColumnName = "auto_add_setting"
+        static let settingsColumnName = "settings"
         static let episodeColumnName = "episode_uuid"
         static let idColumnName = "id"
     }

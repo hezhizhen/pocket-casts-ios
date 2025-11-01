@@ -6,7 +6,7 @@ extension SyncTask {
     func processServerData(response: Api_SyncUpdateResponse) {
         var podcastsToImport = [Api_SyncUserPodcast]()
         var episodesToImport = [Api_SyncUserEpisode]()
-        var filtersToImport = [Api_SyncUserPlaylist]()
+        var playlistsToImport = [Api_SyncUserPlaylist]()
         var foldersToImport = [Api_SyncUserFolder]()
         var bookmarksToImport = [Api_SyncUserBookmark]()
 
@@ -19,14 +19,24 @@ extension SyncTask {
             case .episode:
                 episodesToImport.append(item.episode)
             case .playlist:
-                filtersToImport.append(item.playlist)
+                playlistsToImport.append(item.playlist)
             case .folder:
                 foldersToImport.append(item.folder)
             case .bookmark:
                 bookmarksToImport.append(item.bookmark)
             case .device:
-                continue // we aren't expecting the server to send us devices
+                StatsManager.shared.updateStatsIfNeeded(
+                    savedDynamicSpeed: TimeInterval(item.device.timeSilenceRemoval.value),
+                    savedVariableSpeed: TimeInterval(item.device.timeVariableSpeed.value),
+                    totalListenedTo: TimeInterval(item.device.timeListened.value),
+                    totalSkipped: TimeInterval(item.device.timeSkipping.value),
+                    savedAutoSkipping: TimeInterval(item.device.timeIntroSkipping.value)
+                )
             }
+        }
+
+        if FeatureFlag.useSyncResponseEpisodeIDs.enabled {
+            DataManager.sharedManager.markAllSynced(episodeIDs: episodesToImport.map({ $0.uuid }))
         }
 
         totalToImport = podcastsToImport.count
@@ -60,33 +70,35 @@ extension SyncTask {
             }
         }
 
-        for filterItem in filtersToImport {
+        for playlistItem in playlistsToImport {
             importQueue.addOperation { [weak self] in
                 guard let strongSelf = self else { return }
 
-                strongSelf.importFilter(filterItem)
+                strongSelf.importPlaylist(playlistItem)
             }
         }
 
-        if dataManager.bookmarksEnabled {
-            FileLog.shared.addMessage("SyncTask: Found \(bookmarksToImport.count) bookmarks to import")
+        FileLog.shared.addMessage("SyncTask: Found \(bookmarksToImport.count) bookmarks to import")
 
-            for bookmark in bookmarksToImport {
-                importQueue.addOperation { [weak self] in
-                    guard let strongSelf = self else { return }
-                    let semaphore = DispatchSemaphore(value: 0)
+        for bookmark in bookmarksToImport {
+            importQueue.addOperation { [weak self] in
+                guard let strongSelf = self else { return }
+                let semaphore = DispatchSemaphore(value: 0)
 
-                    Task {
-                        await strongSelf.importBookmark(bookmark)
-                        semaphore.signal()
-                    }
-
-                    semaphore.wait()
+                Task {
+                    await strongSelf.importBookmark(bookmark)
+                    semaphore.signal()
                 }
+
+                semaphore.wait()
             }
         }
 
         importQueue.waitUntilAllOperationsAreFinished()
+
+        // If any podcasts were moved out of their folders, the app saves this info
+        // In case of sync errors the user can restore.
+        FolderHistoryHelper.shared.snapshot()
     }
 
     private func importPodcast(_ podcastItem: Api_SyncUserPodcast) {
@@ -94,10 +106,14 @@ extension SyncTask {
         if podcastItem.hasIsDeleted, podcastItem.isDeleted.value {
             if let podcast = existingPodcast {
                 podcast.autoDownloadSetting = AutoDownloadSetting.off.rawValue
-                podcast.pushEnabled = false
+                podcast.isPushEnabled = false
                 podcast.autoArchiveEpisodeLimit = 0
                 podcast.subscribed = 0
                 podcast.autoAddToUpNext = AutoAddToUpNextSetting.off.rawValue
+                podcast.settings = PodcastSettings.defaults
+                if FeatureFlag.settingsSync.enabled {
+                    podcast.processSettings(podcastItem.settings)
+                }
 
                 DataManager.sharedManager.save(podcast: podcast)
             }
@@ -139,7 +155,10 @@ extension SyncTask {
         if podcastItem.hasFolderUuid {
             let folderUuid = podcastItem.folderUuid.value
 
-            FileLog.shared.foldersIssue("SyncTask importItem: \(podcast.title ?? "") changing folder from \(podcast.folderUuid ?? "nil") to \(((folderUuid == DataConstants.homeGridFolderUuid) ? nil : folderUuid) ?? "nil")")
+
+            if folderUuid == DataConstants.homeGridFolderUuid, let originalFolderUuid = podcast.folderUuid {
+                FolderHistoryHelper.shared.add(podcastUuid: podcastItem.uuid, folderUuid: originalFolderUuid)
+            }
 
             podcast.folderUuid = (folderUuid == DataConstants.homeGridFolderUuid) ? nil : folderUuid
         }
@@ -149,6 +168,10 @@ extension SyncTask {
 
         if checkIsDeleted, podcastItem.hasIsDeleted {
             podcast.subscribed = podcastItem.isDeleted.value ? 0 : 1
+        }
+
+        if FeatureFlag.settingsSync.enabled {
+            podcast.processSettings(podcastItem.settings)
         }
     }
 
@@ -162,6 +185,11 @@ extension SyncTask {
         }
 
         guard let episode = existingEpisode else { return }
+
+        let updateSaved = DataManager.sharedManager.saveIfNotModified(chapters: episodeItem.deselectedChapters, remoteModified: episodeItem.deselectedChaptersModified.value, episodeUuid: episode.uuid)
+        if updateSaved {
+            ServerConfig.shared.syncDelegate?.deselectedChaptersChanged()
+        }
 
         if episodeItem.hasStarred, episode.keepEpisode != episodeItem.starred.value {
             let updateSaved = DataManager.sharedManager.saveIfNotModified(starred: episodeItem.starred.value, episodeUuid: episode.uuid)
@@ -225,7 +253,6 @@ extension SyncTask {
         // if another device has deleted this folder, we need to delete it as well. No point in importing any of it's properties, so we return here as well
         if folderItem.isDeleted {
             DataManager.sharedManager.delete(folderUuid: folderUuid, markAsDeleted: false)
-            FileLog.shared.foldersIssue("SyncTask importFolder: delete folder \(folderUuid)")
 
             return
         }
@@ -246,88 +273,139 @@ extension SyncTask {
         DataManager.sharedManager.save(folder: folder)
     }
 
-    private func importFilter(_ filterItem: Api_SyncUserPlaylist) {
-        let filterUuid = filterItem.originalUuid // it's important to use this field, not uuid because the server won't change the case on this one
-        var existingFilter = DataManager.sharedManager.findFilter(uuid: filterUuid)
+    private func importPlaylist(_ playlistItem: Api_SyncUserPlaylist) {
+        let playlistUuid = playlistItem.originalUuid // it's important to use this field, not uuid because the server won't change the case on this one
+        var existingPlaylist = DataManager.sharedManager.findPlaylist(uuid: playlistUuid)
 
         // if the filter exists, and another device has deleted it, then delete it
-        if filterItem.hasIsDeleted, filterItem.isDeleted.value {
-            if let filter = existingFilter {
-                DataManager.sharedManager.delete(filter: filter)
+        if playlistItem.hasIsDeleted, playlistItem.isDeleted.value {
+            if let playlist = existingPlaylist {
+                DataManager.sharedManager.delete(playlist: playlist)
             }
 
             return
         }
 
-        if filterItem.hasManual, filterItem.manual.value {
-            return // we don't support manual filters
+        if existingPlaylist == nil {
+            existingPlaylist = EpisodeFilter()
+            existingPlaylist?.uuid = playlistUuid
         }
 
-        if existingFilter == nil {
-            existingFilter = EpisodeFilter()
-            existingFilter?.uuid = filterUuid
-        }
+        guard let playlist = existingPlaylist else { return }
 
-        guard let filter = existingFilter else { return }
-
-        filter.wasDeleted = false
-        filter.syncStatus = SyncStatus.synced.rawValue
-        if filterItem.hasTitle {
-            filter.playlistName = filterItem.title.value
+        playlist.syncStatus = SyncStatus.synced.rawValue
+        if playlistItem.hasTitle {
+            playlist.playlistName = playlistItem.title.value
         }
-        if filterItem.hasAllPodcasts {
-            filter.filterAllPodcasts = filterItem.allPodcasts.value
+        if playlistItem.hasAllPodcasts {
+            playlist.filterAllPodcasts = playlistItem.allPodcasts.value
         }
-        if filterItem.hasAudioVideo {
-            filter.filterAudioVideoType = filterItem.audioVideo.value
+        if playlistItem.hasAudioVideo {
+            playlist.filterAudioVideoType = playlistItem.audioVideo.value
         }
-        if filterItem.hasNotDownloaded {
-            filter.filterNotDownloaded = filterItem.notDownloaded.value
+        if playlistItem.hasNotDownloaded {
+            playlist.filterNotDownloaded = playlistItem.notDownloaded.value
         }
-        if filterItem.hasDownloaded {
-            filter.filterDownloaded = filterItem.downloaded.value
+        if playlistItem.hasDownloaded {
+            playlist.filterDownloaded = playlistItem.downloaded.value
         }
-        if filterItem.hasFinished {
-            filter.filterFinished = filterItem.finished.value
+        if playlistItem.hasFinished {
+            playlist.filterFinished = playlistItem.finished.value
         }
-        if filterItem.hasPartiallyPlayed {
-            filter.filterPartiallyPlayed = filterItem.partiallyPlayed.value
+        if playlistItem.hasPartiallyPlayed {
+            playlist.filterPartiallyPlayed = playlistItem.partiallyPlayed.value
         }
-        if filterItem.hasUnplayed {
-            filter.filterUnplayed = filterItem.unplayed.value
+        if playlistItem.hasUnplayed {
+            playlist.filterUnplayed = playlistItem.unplayed.value
         }
-        if filterItem.hasStarred {
-            filter.filterStarred = filterItem.starred.value
+        if playlistItem.hasStarred {
+            playlist.filterStarred = playlistItem.starred.value
         }
-        if filterItem.hasSortPosition {
-            filter.sortPosition = filterItem.sortPosition.value
+        if playlistItem.hasSortPosition {
+            playlist.sortPosition = playlistItem.sortPosition.value
         }
-        if filterItem.hasSortType {
-            filter.sortType = filterItem.sortType.value
+        if playlistItem.hasSortType {
+            playlist.sortType = playlistItem.sortType.value
         }
-        if filterItem.hasIconID {
-            filter.customIcon = filterItem.iconID.value
+        if playlistItem.hasIconID {
+            playlist.customIcon = playlistItem.iconID.value
         }
-        if filterItem.hasFilterHours {
-            filter.filterHours = filterItem.filterHours.value
+        if playlistItem.hasFilterHours {
+            playlist.filterHours = playlistItem.filterHours.value
         }
-        if filterItem.hasFilterDuration {
-            filter.filterDuration = filterItem.filterDuration.value
+        if playlistItem.hasFilterDuration {
+            playlist.filterDuration = playlistItem.filterDuration.value
         }
-        if filterItem.hasShorterThan {
-            filter.shorterThan = filterItem.shorterThan.value
+        if playlistItem.hasShorterThan {
+            playlist.shorterThan = playlistItem.shorterThan.value
         }
-        if filterItem.hasLongerThan {
-            filter.longerThan = filterItem.longerThan.value
+        if playlistItem.hasLongerThan {
+            playlist.longerThan = playlistItem.longerThan.value
         }
-
-        if filterItem.hasPodcastUuids {
-            filter.podcastUuids = filterItem.podcastUuids.value
+        if playlistItem.hasManual {
+            playlist.manual = playlistItem.manual.value
+        }
+        if playlistItem.hasPodcastUuids {
+            playlist.podcastUuids = playlistItem.podcastUuids.value
         } else {
-            filter.podcastUuids = ""
+            playlist.podcastUuids = ""
         }
 
-        DataManager.sharedManager.save(filter: filter)
+        let serverSet = Set(playlistItem.episodeOrder)
+        let matchedEpisodes = DataManager.sharedManager.playlistEpisodes(for: playlist).map { $0.uuid }
+        let missingEpisodes = serverSet.subtracting(matchedEpisodes)
+
+        let addedEpisodes: [Episode] = missingEpisodes.compactMap { episode -> Episode? in
+            let playlistEpisode = playlistItem.episodes.first(where: { $0.episode == episode })
+            guard let playlistEpisode else { return nil }
+            let episode = DataManager.sharedManager.findEpisode(uuid: playlistEpisode.episode)
+            return episode ?? Episode(playlistEpisode)
+        }
+
+        addedEpisodes.forEach { episode in
+            if DataManager.sharedManager.findEpisode(uuid: episode.uuid) == nil {
+                episode.wasDeleted = true
+            }
+
+            if episode.addedDate == nil {
+                episode.addedDate = Date()
+            }
+            if episode.podcast_id == 0 {
+                episode.podcast_id = DataManager.sharedManager.findPodcast(uuid: episode.podcastUuid, includeUnsubscribed: true)?.id ?? 0
+            }
+
+            DataManager.sharedManager.save(episode: episode)
+        }
+
+        let didAdd = DataManager.sharedManager.add(episodes: addedEpisodes, to: playlist)
+        if !didAdd {
+            let playlistCount = DataManager.sharedManager.playlistEpisodeCount(for: playlist, episodeUuidToAdd: nil, shouldShowArchived: true)
+            FileLog.shared.addMessage("SyncTask: Tried to add too many episodes to imported playlist \(playlist.playlistName) episodeCount: \(addedEpisodes) playlistCount: \(playlistCount)")
+        }
+
+        updateEpisodePositionsIfNeeded(for: playlistItem, playlist: playlist)
+
+        playlist.syncStatus = SyncStatus.synced.rawValue
+        DataManager.sharedManager.save(playlist: playlist)
+
+        addedEpisodes.forEach { addedEpisode in
+            ServerPodcastManager.shared.addMissingPodcastAndEpisode(episodeUuid: addedEpisode.uuid, podcastUuid: addedEpisode.podcastUuid, shouldUpdateEpisode: true)
+        }
+    }
+
+    private func updateEpisodePositionsIfNeeded(for playlistItem: Api_SyncUserPlaylist, playlist: EpisodeFilter) {
+        guard playlist.manual else { return }
+
+        let orderedEpisodeUuids = playlistItem.episodeOrder.isEmpty ? playlistItem.episodes.map { $0.episode } : playlistItem.episodeOrder
+        guard !orderedEpisodeUuids.isEmpty else { return }
+
+        var processedUuids = Set<String>()
+
+        for (index, episodeUuid) in orderedEpisodeUuids.enumerated() {
+            guard !episodeUuid.isEmpty, processedUuids.insert(episodeUuid).inserted else { continue }
+
+            DataManager.sharedManager.moveEpisode(episodeUuid, in: playlist, to: index)
+        }
     }
 
     func isPlayerPlaying(episode: Episode) -> Bool {
@@ -409,5 +487,28 @@ private extension Api_SyncUserBookmark {
 
     var logDescription: String {
         (try? jsonString()) ?? "invalid api bookmark"
+    }
+}
+
+extension Podcast {
+    func processSettings(_ settings: Api_PodcastSettings) {
+        let oldSettings = self.settings
+        self.settings.$customEffects.update(setting: settings.playbackEffects)
+        self.settings.$autoStartFrom.update(setting: settings.autoStartFrom)
+        self.settings.$autoSkipLast.update(setting: settings.autoSkipLast)
+        self.settings.$trimSilence.update(setting: settings.trimSilence)
+        self.settings.$playbackSpeed.update(setting: settings.playbackSpeed)
+        self.settings.$boostVolume.update(setting: settings.volumeBoost)
+        self.settings.$notification.update(setting: settings.notification)
+        self.settings.$addToUpNext.update(setting: settings.addToUpNext)
+        self.settings.$addToUpNextPosition.update(setting: settings.addToUpNextPosition)
+        self.settings.$episodesSortOrder.update(setting: settings.episodesSortOrder)
+        self.settings.$episodeGrouping.update(setting: settings.episodeGrouping)
+        self.settings.$showArchived.update(setting: settings.showArchived)
+        self.settings.$autoArchive.update(setting: settings.autoArchive)
+        self.settings.$autoArchivePlayed.update(setting: settings.autoArchivePlayed)
+        self.settings.$autoArchiveInactive.update(setting: settings.autoArchiveInactive)
+        self.settings.$autoArchiveEpisodeLimit.update(setting: settings.autoArchiveEpisodeLimit)
+        oldSettings.printDiff(from: self.settings, withIdentifier: self.uuid)
     }
 }

@@ -1,28 +1,30 @@
-import MaterialComponents.MaterialBottomSheet
 import PocketCastsDataModel
 import PocketCastsUtils
+import PocketCastsServer
+import SwiftUI
 
 extension UpNextViewController: UITableViewDelegate, UITableViewDataSource {
     // MARK: - TableView DataSource
 
     func numberOfSections(in tableView: UITableView) -> Int {
-        tableData().count
+        tableData.count
     }
 
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        let section = tableData()[section]
+        let section = tableData[section]
         switch section {
         case .nowPlayingSection:
             return 1
         case .upNextSection:
-            return max(1, PlaybackManager.shared.queue.upNextCount())
+            let count = PlaybackManager.shared.queue.upNextCount()
+            return count == 0 ? 1 : count
         }
     }
 
     // MARK: - Section Headers
 
     func tableView(_ tableView: UITableView, viewForHeaderInSection section: Int) -> UIView? {
-        guard tableData()[section] == .upNextSection, tableData().count > 1 else { return nil }
+        guard tableData[section] == .upNextSection, tableData.count > 1 else { return nil }
         let headerView = UIView(frame: CGRect(x: 0, y: 0, width: 0, height: 48))
 
         updateTimeRemainingLabel()
@@ -33,21 +35,32 @@ extension UpNextViewController: UITableViewDelegate, UITableViewDataSource {
             remainingLabel.centerYAnchor.constraint(equalTo: headerView.centerYAnchor)
         ])
 
-        headerView.addSubview(clearQueueButton)
-        clearQueueButton.translatesAutoresizingMaskIntoConstraints = false
-        clearQueueButton.setContentCompressionResistancePriority(.required, for: .horizontal)
-        NSLayoutConstraint.activate([
-            clearQueueButton.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -20),
-            clearQueueButton.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
-            clearQueueButton.leadingAnchor.constraint(greaterThanOrEqualTo: remainingLabel.trailingAnchor, constant: 10)
-        ])
-
-        clearQueueButton.isEnabled = PlaybackManager.shared.queue.upNextCount() > 0
+        if FeatureFlag.upNextShuffle.enabled {
+            headerView.addSubview(shuffleButton)
+            shuffleButton.translatesAutoresizingMaskIntoConstraints = false
+            shuffleButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+            NSLayoutConstraint.activate([
+                shuffleButton.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -20),
+                shuffleButton.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
+                shuffleButton.leadingAnchor.constraint(greaterThanOrEqualTo: remainingLabel.trailingAnchor, constant: 10)
+            ])
+            shuffleButton.isHidden = PlaybackManager.shared.queue.upNextCount() == 0
+        } else {
+            headerView.addSubview(clearQueueButton)
+            clearQueueButton.translatesAutoresizingMaskIntoConstraints = false
+            clearQueueButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+            NSLayoutConstraint.activate([
+                clearQueueButton.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -20),
+                clearQueueButton.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
+                clearQueueButton.leadingAnchor.constraint(greaterThanOrEqualTo: remainingLabel.trailingAnchor, constant: 10)
+            ])
+            clearQueueButton.isEnabled = PlaybackManager.shared.queue.upNextCount() > 0
+        }
         return headerView
     }
 
     func tableView(_ tableView: UITableView, heightForHeaderInSection section: Int) -> CGFloat {
-        let section = tableData()[section]
+        let section = tableData[section]
         switch section {
         case .nowPlayingSection:
             return 16
@@ -59,7 +72,7 @@ extension UpNextViewController: UITableViewDelegate, UITableViewDataSource {
     // MARK: - Cell Population
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
-        let section = tableData()[indexPath.section]
+        let section = tableData[indexPath.section]
         if section == .nowPlayingSection {
             let nowPlayingCell = tableView.dequeueReusableCell(withIdentifier: UpNextViewController.nowPlayingCell, for: indexPath) as! UpNextNowPlayingCell
             nowPlayingCell.themeOverride = themeOverride
@@ -70,9 +83,17 @@ extension UpNextViewController: UITableViewDelegate, UITableViewDataSource {
         }
 
         if PlaybackManager.shared.queue.upNextCount() == 0 {
-            let nothingCell = tableView.dequeueReusableCell(withIdentifier: UpNextViewController.noUpNextCell, for: indexPath) as! NothingUpNextCell
-            nothingCell.themeOverride = themeOverride
-            return nothingCell
+            let emptyCell = tableView.dequeueReusableCell(withIdentifier: UpNextViewController.emptyStateCell, for: indexPath) as! EmptyStateCell
+            emptyCell.configure(title: L10n.upNextEmptyTitle,
+                                message: L10n.upNextEmptyDescription,
+                                icon: { Image("upnext") },
+                actions: [
+                    .init(title: L10n.goToDiscover) {
+                        Analytics.shared.track(.upNextDiscoverButtonTapped)
+                        NavigationManager.sharedManager.navigateTo(NavigationManager.discoverPageKey)
+                    }
+            ])
+            return emptyCell
         }
 
         let playerCell = tableView.dequeueReusableCell(withIdentifier: UpNextViewController.playerCell, for: indexPath) as! PlayerCell
@@ -90,7 +111,7 @@ extension UpNextViewController: UITableViewDelegate, UITableViewDataSource {
     // MARK: - Selection
 
     func tableView(_ tableView: UITableView, willSelectRowAt indexPath: IndexPath) -> IndexPath? {
-        guard !multiSelectGestureInProgress, tableData()[indexPath.section] == .upNextSection else {
+        guard !multiSelectGestureInProgress, tableData[indexPath.section] == .upNextSection else {
             return indexPath
         }
 
@@ -105,7 +126,7 @@ extension UpNextViewController: UITableViewDelegate, UITableViewDataSource {
     }
 
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
-        if isMultiSelectEnabled, tableData()[indexPath.section] == .upNextSection {
+        if isMultiSelectEnabled, tableData[indexPath.section] == .upNextSection {
             // the cell below is optional because cellForRow only returns a cell if it's visible, and we don't need to tick cells that don't exist
             if let episode = DataManager.sharedManager.playlistEpisodeAt(index: indexPath.row + 1) {
                 if !multiSelectGestureInProgress {
@@ -123,7 +144,7 @@ extension UpNextViewController: UITableViewDelegate, UITableViewDataSource {
             }
         } else {
             tableView.deselectRow(at: indexPath, animated: true)
-            let section = tableData()[indexPath.section]
+            let section = tableData[indexPath.section]
 
             if section == .nowPlayingSection {
                 track(.upNextNowPlayingTapped)
@@ -164,7 +185,7 @@ extension UpNextViewController: UITableViewDelegate, UITableViewDataSource {
     // MARK: - Rearrange
 
     func tableView(_ tableView: UITableView, canMoveRowAt indexPath: IndexPath) -> Bool {
-        let section = tableData()[indexPath.section]
+        let section = tableData[indexPath.section]
         if section == .nowPlayingSection {
             return false
         } else if section == .upNextSection, PlaybackManager.shared.queue.upNextCount() == 0 {
@@ -189,7 +210,7 @@ extension UpNextViewController: UITableViewDelegate, UITableViewDataSource {
     }
 
     func tableView(_ tableView: UITableView, targetIndexPathForMoveFromRowAt sourceIndexPath: IndexPath, toProposedIndexPath proposedDestinationIndexPath: IndexPath) -> IndexPath {
-        let toSection = tableData()[proposedDestinationIndexPath.section]
+        let toSection = tableData[proposedDestinationIndexPath.section]
 
         if toSection == .upNextSection { return proposedDestinationIndexPath }
 
@@ -207,24 +228,23 @@ extension UpNextViewController: UITableViewDelegate, UITableViewDataSource {
     // MARK: - Swipe Actions
 
     func tableView(_ tableView: UITableView, canEditRowAt indexPath: IndexPath) -> Bool {
-        tableData()[indexPath.section] == .upNextSection
+        tableData[indexPath.section] == .upNextSection
     }
 
     // MARK: - Cell Heights
 
     func tableView(_ tableView: UITableView, heightForRowAt indexPath: IndexPath) -> CGFloat {
-        rowHeightAt(indexPath: indexPath)
+        let section = tableData[indexPath.section]
+        if section == .nowPlayingSection { return UpNextViewController.nowPlayingRowHeight }
+        if PlaybackManager.shared.queue.upNextCount() == 0 { return UpNextViewController.emptyStateRowHeight }
+        return UpNextViewController.upNextRowHeight
     }
 
     func tableView(_ tableView: UITableView, estimatedHeightForRowAt indexPath: IndexPath) -> CGFloat {
-        rowHeightAt(indexPath: indexPath)
-    }
-
-    func rowHeightAt(indexPath: IndexPath) -> CGFloat {
-        let section = tableData()[indexPath.section]
+        let section = tableData[indexPath.section]
         if section == .nowPlayingSection { return UpNextViewController.nowPlayingRowHeight }
-
-        return PlaybackManager.shared.queue.upNextCount() > 0 ? UpNextViewController.upNextRowHeight : UpNextViewController.noUpNextRowHeight
+        if PlaybackManager.shared.queue.upNextCount() == 0 { return UpNextViewController.emptyStateRowHeight }
+        return UpNextViewController.upNextRowHeight
     }
 
     // MARK: - Multiselect
@@ -246,16 +266,20 @@ extension UpNextViewController: UITableViewDelegate, UITableViewDataSource {
 
     // MARK: - Helper Functions
 
-    func tableData() -> [sections] {
+    func refreshSections() {
         var sections: [sections] = [.upNextSection]
 
         if let _ = PlaybackManager.shared.currentEpisode() {
             sections.insert(.nowPlayingSection, at: 0)
+            upNextTable.themeStyle = .primaryUi04
+        } else {
+            upNextTable.backgroundColor = UIColor(Theme.sharedTheme.primaryUi02)
         }
-        return sections
+        tableData = sections
     }
 
     @objc func reloadTable() {
+        refreshSections()
         upNextTable.reloadData()
     }
 
@@ -273,23 +297,26 @@ extension UpNextViewController: UITableViewDelegate, UITableViewDataSource {
             if let currentUuid = PlaybackManager.shared.currentEpisode()?.uuid {
                 selectedEpisodesRemove(uuid: currentUuid)
             }
+            if upNextUuids.isEmpty {
+                isMultiSelectEnabled = false
+            }
         }
-
         // this method is sometimes called during a re-arrange animation. For whatever weird reason doing this as part of that operation causes the table to flash.
         // This is only when the Lottie animation in the the now playing cell is running, so before removing this call, test that case
         DispatchQueue.main.async {
-            self.upNextTable.reloadData()
+            self.updateNavBarButtons()
+            self.reloadTable()
         }
     }
 
     @objc func appDidBecomeActive() {
-        // there's a weird issue with the drag handle tints dissapearing on the app coming back from being backgrounded, so reload the table in that case
-        upNextTable.reloadData()
+        // there's a weird issue with the drag handle tints disappearing on the app coming back from being backgrounded, so reload the table in that case
+        self.reloadTable()
     }
 
     @objc func tableLongPressed(_ sender: UILongPressGestureRecognizer) {
         let touchPoint = sender.location(in: upNextTable)
-        guard let indexPath = upNextTable.indexPathForRow(at: touchPoint), tableData()[indexPath.section] == .upNextSection,
+        guard let indexPath = upNextTable.indexPathForRow(at: touchPoint), tableData[indexPath.section] == .upNextSection,
               let episode = PlaybackManager.shared.queue.episodeAt(index: indexPath.row) else { return }
 
         if sender.state == .began {

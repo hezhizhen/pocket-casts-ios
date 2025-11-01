@@ -48,33 +48,33 @@ struct SearchField: View {
     var body: some View {
         // We use 2 stacks here to have the cancel button appear outside the background
         HStack {
-            HStack(spacing: SearchFieldConstants.padding) {
+            HStack(spacing: SearchFieldConstants.horizontalPadding) {
                 Image("custom_search")
                     .renderingMode(.template)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
                     .frame(width: iconSize, height: iconSize)
-                    .foregroundStyle(theme.placeholder)
+                    .foregroundStyle(theme.icon)
 
                 let prompt = Text(placeholder).foregroundColor(theme.placeholder)
 
                 TextField(placeholder, text: $text, prompt: prompt)
                     .foregroundColor(theme.text)
                     .focused($isFocused)
-                    .padding(.vertical, SearchFieldConstants.padding)
+                    .padding(.vertical, SearchFieldConstants.verticalPadding)
 
                 if !text.isEmpty {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(theme.placeholder)
+                    Image("search_cancel")
+                        .foregroundStyle(theme.icon)
                         .buttonize {
                             text = ""
                         }
                 }
             }
-            .padding(.horizontal, SearchFieldConstants.padding)
+            .padding(.horizontal, SearchFieldConstants.horizontalPadding)
             .background(theme.background)
-            .cornerRadius(SearchFieldConstants.cornerRadius)
-            .font(size: 14, style: .subheadline, weight: .medium)
+            .clipShape(RoundedRectangle(cornerSize: CGSize(width: SearchFieldConstants.cornerRadius, height: SearchFieldConstants.cornerRadius), style: .continuous))
+            .font(size: 15, style: .body)
 
             // Show the cancel button
             if showsCancelButton && isCancelVisible {
@@ -84,7 +84,7 @@ struct SearchField: View {
                         isFocused = false
                     }
                 }
-                .font(size: 14, style: .subheadline)
+                .font(size: 15, style: .body)
                 .foregroundStyle(theme.cancel)
                 .transition(
                     .move(edge: .trailing)
@@ -112,25 +112,30 @@ struct SearchField: View {
 
     class SearchTheme: ThemeObserver {
         var background: Color {
-            theme.primaryField01
+            theme.secondaryField01
         }
 
         var placeholder: Color {
-            theme.primaryField03
+            theme.secondaryText02
         }
 
         var text: Color {
-            theme.primaryText01
+            theme.secondaryText01
         }
 
         var cancel: Color {
-            theme.primaryInteractive01
+            theme.secondaryText01
+        }
+
+        var icon: Color {
+            theme.secondaryIcon02
         }
     }
 }
 
 private enum SearchFieldConstants {
-    static let padding = 8.0
+    static let horizontalPadding = 10.0
+    static let verticalPadding = 8.0
     static let cornerRadius = 8.0
 }
 

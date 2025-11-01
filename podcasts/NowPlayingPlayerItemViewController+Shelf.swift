@@ -1,8 +1,8 @@
 import AVKit
 import PocketCastsServer
-import Foundation
-import MaterialComponents.MaterialBottomSheet
+import UIKit
 import PocketCastsDataModel
+import PocketCastsUtils
 
 protocol NowPlayingActionsDelegate: AnyObject {
     func starEpisodeTapped()
@@ -15,18 +15,25 @@ protocol NowPlayingActionsDelegate: AnyObject {
     func markPlayedTapped()
     func archiveTapped()
     func bookmarkTapped()
-
+    func transcriptTapped()
+    func downloadTapped()
     func sharedRoutePicker(largeSize: Bool) -> PCRoutePickerView
+    func presentManualPlaylistsChooser()
 }
 
 extension NowPlayingPlayerItemViewController: NowPlayingActionsDelegate {
+
     @objc func reloadShelfActions() {
         guard let playingEpisode = PlaybackManager.shared.currentEpisode() else { return }
 
+        #if APPCLIP
+        let actions: [PlayerAction] = [.effects, .sleepTimer, .routePicker]
+        #else
         let actions = Settings.playerActions()
+        #endif
 
         // don't reload the actions unless we need to
-        if !lastShelfLoadState.updateRequired(shelfActions: actions, episodeUuid: playingEpisode.uuid, effectsOn: PlaybackManager.shared.effects().effectsEnabled(), sleepTimerOn: PlaybackManager.shared.sleepTimerActive(), episodeStarred: playingEpisode.keepEpisode) { return }
+        if !lastShelfLoadState.updateRequired(shelfActions: actions, episodeUuid: playingEpisode.uuid, effectsOn: PlaybackManager.shared.effects().effectsEnabled(), sleepTimerOn: PlaybackManager.shared.sleepTimerActive(), episodeStarred: playingEpisode.keepEpisode, episodeStatus: playingEpisode.episodeStatus) { return }
 
         // load the first 4 actions into the player, followed by an overflow icon
         playerControlsStackView.removeAllSubviews()
@@ -99,8 +106,10 @@ extension NowPlayingPlayerItemViewController: NowPlayingActionsDelegate {
 
             addToShelf(on: gotoPodcastBtn)
         case .chromecast:
+            #if !APPCLIP
             playerControlsStackView.addArrangedSubview(chromecastBtn)
             addToShelf(on: chromecastBtn)
+            #endif
         case .starEpisode:
             if playingEpisode is Episode {
                 let starBtn = UIButton(frame: CGRect.zero)
@@ -141,6 +150,40 @@ extension NowPlayingPlayerItemViewController: NowPlayingActionsDelegate {
             button.accessibilityLabel = L10n.addBookmark
 
             addToShelf(on: button)
+
+        case .transcript:
+            #if !APPCLIP
+            let button = TranscriptShelfButton(frame: CGRect.zero)
+            button.isPointerInteractionEnabled = true
+            button.imageView?.tintColor = ThemeColor.playerContrast02()
+            button.setImage(UIImage(named: action.largeIconName(episode: playingEpisode)), for: .normal)
+            button.addTarget(self, action: #selector(transcriptTapped(_:)), for: .touchUpInside)
+            button.accessibilityLabel = L10n.transcript
+
+            addToShelf(on: button)
+            #endif
+
+        case .download:
+            let button = UIButton(frame: CGRect.zero)
+            button.isPointerInteractionEnabled = true
+            button.imageView?.tintColor = ThemeColor.playerContrast02()
+            button.setImage(UIImage(named: action.largeIconName(episode: playingEpisode)), for: .normal)
+            button.addTarget(self, action: #selector(downloadTapped(_:)), for: .touchUpInside)
+            button.accessibilityLabel = L10n.download
+
+            addToShelf(on: button)
+
+        case .addToPlaylist:
+#if !APPCLIP
+            let button = UIButton(frame: CGRect.zero)
+            button.isPointerInteractionEnabled = true
+            button.imageView?.tintColor = ThemeColor.playerContrast02()
+            button.setImage(UIImage(named: action.largeIconName(episode: playingEpisode)), for: .normal)
+            button.addTarget(self, action: #selector(presentManualPlaylistsChooser(_:)), for: .touchUpInside)
+            button.accessibilityLabel = L10n.playlistManualEpisodeAddToPlaylist
+
+            addToShelf(on: button)
+#endif
         }
 
         return true
@@ -175,31 +218,41 @@ extension NowPlayingPlayerItemViewController: NowPlayingActionsDelegate {
     }
 
     func shareTapped() {
+        #if !APPCLIP
         shareEpisode(sender: playerControlsStackView)
+        #endif
     }
 
     func goToTapped() {
+        #if !APPCLIP
         if PlaybackManager.shared.currentEpisode() is Episode {
             goToPodcast()
         } else if PlaybackManager.shared.currentEpisode() is UserEpisode {
             goToFiles()
         }
+        #endif
     }
 
     func chromecastTapped() {
+        #if !APPCLIP
         googleCastTapped()
+        #endif
     }
 
     func markPlayedTapped() {
+        #if !APPCLIP
         markPlayed()
+        #endif
     }
 
     func archiveTapped() {
+        #if !APPCLIP
         if PlaybackManager.shared.currentEpisode() is UserEpisode {
             delete()
         } else {
             archive()
         }
+        #endif
     }
 
     func sharedRoutePicker(largeSize: Bool) -> PCRoutePickerView {
@@ -216,18 +269,78 @@ extension NowPlayingPlayerItemViewController: NowPlayingActionsDelegate {
     }
 
     func bookmarkTapped() {
+        #if !APPCLIP
         PlaybackManager.shared.bookmark(source: .player)
+        #endif
+    }
+
+    func transcriptTapped() {
+        #if !APPCLIP
+        displayTranscript = true
+        #endif
+    }
+
+    func downloadTapped() {
+        #if !APPCLIP
+        guard let episode = PlaybackManager.shared.currentEpisode() as? Episode else { return }
+
+        AnalyticsEpisodeHelper.shared.currentSource = analyticsSource
+
+        if episode.downloaded(pathFinder: DownloadManager.shared) {
+            let confirmation = OptionsPicker(title: L10n.podcastDetailsRemoveDownload)
+            let yesAction = OptionAction(label: L10n.remove, icon: nil) {
+                self.deleteDownloadedFile()
+                Toast.show(L10n.playerEpisodeWasRemoved)
+            }
+            yesAction.destructive = true
+            confirmation.addAction(action: yesAction)
+
+            confirmation.show(statusBarStyle: preferredStatusBarStyle)
+        } else if episode.isInDownloadProcess {
+            PlaybackActionHelper.stopDownload(episodeUuid: episode.uuid)
+            Toast.show(L10n.playerEpisodeDownloadCancelled)
+        } else {
+            PlaybackActionHelper.download(episodeUuid: episode.uuid)
+            Toast.show(L10n.playerEpisodeQueuedForDownload)
+        }
+        #endif
+    }
+
+    private func deleteDownloadedFile() {
+        guard let episode = PlaybackManager.shared.currentEpisode() as? Episode else { return }
+
+        EpisodeManager.analyticsHelper.currentSource = analyticsSource
+
+        PlaybackManager.shared.removeIfPlayingOrQueued(episode: episode, fireNotification: true, userInitiated: false)
+        EpisodeManager.deleteDownloadedFiles(episode: episode, userInitated: true)
+
+        NotificationCenter.postOnMainThread(notification: Constants.Notifications.episodeDownloadStatusChanged, object: episode.uuid)
     }
 
     // MARK: - Player Actions
+    private func presentUsingSheet(_ viewController: UIViewController, forceLarge: Bool = false) {
+        if let sheetController = viewController.sheetPresentationController {
+            // We create a custom detent height of a bit more than half the hosting VC to try and
+            // ensure that all of the shelf content is visible in the sheet. We offer a large detent
+            // as a fallback so that the user can pull the sheet up if any content is ever cut off.
+            let maxWidth = sheetController.containerView?.bounds.width ?? .greatestFiniteMagnitude
+            let sheetDetentHeight = sheetController.presentedViewController.view.sizeThatFits(CGSizeMake(maxWidth, .greatestFiniteMagnitude)).height
+            sheetController.detents = [.custom(resolver: { _ in sheetDetentHeight })]
+
+            // The Shelf Actions VC implements its own grabber UI.
+            sheetController.prefersGrabberVisible = false
+        }
+
+        present(viewController, animated: true, completion: nil)
+    }
 
     @objc func overflowTapped() {
+        #if !APPCLIP
         let shelfController = ShelfActionsViewController()
         shelfController.playerActionsDelegate = self
-        let bottomSheet = MDCBottomSheetController(contentViewController: shelfController)
-        roundCorners(bottomSheet: bottomSheet)
 
-        present(bottomSheet, animated: true, completion: nil)
+        presentUsingSheet(shelfController, forceLarge: true)
+        #endif
     }
 
     @objc private func sleepBtnTapped(_ sender: UIButton) {
@@ -251,8 +364,10 @@ extension NowPlayingPlayerItemViewController: NowPlayingActionsDelegate {
     }
 
     @objc private func markPlayedTapped(_ sender: UIButton) {
+        #if !APPCLIP
         shelfButtonTapped(.markPlayed)
         markPlayed()
+        #endif
     }
 
     @objc private func archiveTapped(_ sender: UIButton) {
@@ -261,20 +376,43 @@ extension NowPlayingPlayerItemViewController: NowPlayingActionsDelegate {
     }
 
     @objc private func shareTapped(_ sender: UIButton) {
+        #if !APPCLIP
         shelfButtonTapped(.shareEpisode)
         shareEpisode(sender: sender)
+        #endif
     }
 
     @objc private func bookmarkTapped(_ sender: UIButton) {
+        #if !APPCLIP
         let action = PlayerAction.addBookmark
         shelfButtonTapped(action)
 
         guard action.isUnlocked else {
-            action.paidFeature?.presentUpgradeController(from: self, source: "bookmarks_shelf_action")
+            action.paidFeature?.presentUpgradeController(from: self, source: .bookmarksShelfAction)
             return
         }
 
         bookmarkTapped()
+        #endif
+    }
+
+    @objc private func transcriptTapped(_ sender: UIButton) {
+        #if !APPCLIP
+        guard let transcriptButton = sender as? TranscriptShelfButton, transcriptButton.isTranscriptEnabled else {
+            Toast.show(TranscriptError.notAvailable.localizedDescription)
+            return
+        }
+        shelfButtonTapped(.transcript)
+
+        displayTranscript = true
+        #endif
+    }
+
+    @objc private func downloadTapped(_ sender: UIButton) {
+        #if !APPCLIP
+        shelfButtonTapped(.download)
+        downloadTapped()
+        #endif
     }
 
     // MARK: - Sleep Timer
@@ -283,8 +421,31 @@ extension NowPlayingPlayerItemViewController: NowPlayingActionsDelegate {
         reloadShelfActions()
     }
 
+    // MARK: - Manual Playlists
+
+    @objc func presentManualPlaylistsChooser(_ sender: UIButton) {
+#if !APPCLIP
+        shelfButtonTapped(.addToPlaylist)
+        presentManualPlaylistsChooser()
+#endif
+    }
+
+    @objc func presentManualPlaylistsChooser() {
+#if !APPCLIP
+        guard let episode = PlaybackManager.shared.currentEpisode() else { return }
+
+        NavigationManager.sharedManager.navigateTo(
+            NavigationManager.manualPlaylistsChooserKey,
+            data: [
+                NavigationManager.manualPlaylistsChooserEpisodeKey: episode
+            ]
+        )
+#endif
+    }
+
     // MARK: - Actions Implementation
 
+    #if !APPCLIP
     private func goToFiles() {
         NavigationManager.sharedManager.navigateTo(NavigationManager.filesPageKey, data: nil)
     }
@@ -330,19 +491,18 @@ extension NowPlayingPlayerItemViewController: NowPlayingActionsDelegate {
         optionsPicker.addDescriptiveActions(title: L10n.playerArchivedConfirmation, message: nil, icon: "shelf_archive", actions: [archiveAction])
         optionsPicker.show(statusBarStyle: preferredStatusBarStyle)
     }
+    #endif
 
     private func showSleepPanel() {
         let sleepController = SleepTimerViewController()
-        let bottomSheet = MDCBottomSheetController(contentViewController: sleepController)
-        roundCorners(bottomSheet: bottomSheet)
-        present(bottomSheet, animated: true, completion: nil)
+
+        presentUsingSheet(sleepController)
     }
 
     private func showEffectsPanel() {
         let effectsController = EffectsViewController()
-        let bottomSheet = MDCBottomSheetController(contentViewController: effectsController)
-        roundCorners(bottomSheet: bottomSheet)
-        present(bottomSheet, animated: true, completion: nil)
+
+        presentUsingSheet(effectsController)
     }
 
     private func performStarAction(starBtn: UIButton? = nil) {
@@ -362,46 +522,29 @@ extension NowPlayingPlayerItemViewController: NowPlayingActionsDelegate {
         }
     }
 
+    #if !APPCLIP
     private func shareEpisode(sender: UIView) {
         guard let episode = PlaybackManager.shared.currentEpisode() as? Episode else { return }
 
-        let shareOptions = OptionsPicker(title: L10n.playerShareHeader, themeOverride: .dark)
-
-        let sharePodcastAction = OptionAction(label: L10n.podcastSingular, icon: "chapter-link") {
-            self.sharePodcast(source: sender, podcast: episode.parentPodcast())
-        }
-        shareOptions.addAction(action: sharePodcastAction)
-
-        let shareLinkAction = OptionAction(label: L10n.episode, icon: "chapter-link") {
-            self.shareEpisode(source: sender, episode: episode, fromTime: 0)
-        }
-        shareOptions.addAction(action: shareLinkAction)
-
-        let sharePositionAction = OptionAction(label: L10n.shareCurrentPosition, icon: "chapter-link") {
-            self.shareEpisode(source: sender, episode: episode, fromTime: PlaybackManager.shared.currentTime())
-        }
-        shareOptions.addAction(action: sharePositionAction)
-
-        shareOptions.show(statusBarStyle: preferredStatusBarStyle)
+        SharingModal.showModal(episode: episode, from: analyticsSource, in: self)
     }
 
     private func shareEpisode(source: UIView, episode: Episode, fromTime: TimeInterval) {
-        guard let buttonSuperview = source.superview else { return }
+        guard let _ = source.superview else { return }
 
-        let type = fromTime == 0 ? "episode" : "current_position"
-
-        Analytics.track(.podcastShared, properties: ["type": type, "source": "player"])
-        let sourceRect = buttonSuperview.convert(source.frame, to: view)
-        SharingHelper.shared.shareLinkTo(episode: episode, shareTime: fromTime, fromController: self, sourceRect: sourceRect, sourceView: view)
+        if fromTime == 0 {
+            SharingModal.show(option: .episode(episode), from: analyticsSource, in: self)
+        } else {
+            SharingModal.show(option: .currentPosition(episode, fromTime), from: analyticsSource, in: self)
+        }
     }
 
     private func sharePodcast(source: UIView, podcast: Podcast?) {
-        guard let buttonSuperview = source.superview, let podcast = podcast else { return }
+        guard let _ = source.superview, let podcast = podcast else { return }
 
-        Analytics.track(.podcastShared, properties: ["type": "podcast", "source": "player"])
-        let sourceRect = buttonSuperview.convert(source.frame, to: view)
-        SharingHelper.shared.shareLinkTo(podcast: podcast, fromController: self, sourceRect: sourceRect, sourceView: view)
+        SharingModal.show(option: .podcast(podcast), from: analyticsSource, in: self)
     }
+    #endif
 
     // MARK: - Private Helpers
 
@@ -412,13 +555,6 @@ extension NowPlayingPlayerItemViewController: NowPlayingActionsDelegate {
             view.widthAnchor.constraint(equalToConstant: 32),
             view.heightAnchor.constraint(equalToConstant: 32)
         ])
-    }
-
-    private func roundCorners(bottomSheet: MDCBottomSheetController) {
-        let shapeGenerator = MDCCurvedRectShapeGenerator(cornerSize: CGSize(width: 8, height: 8))
-        bottomSheet.setShapeGenerator(shapeGenerator, for: .preferred)
-        bottomSheet.setShapeGenerator(shapeGenerator, for: .extended)
-        bottomSheet.setShapeGenerator(shapeGenerator, for: .closed)
     }
 }
 

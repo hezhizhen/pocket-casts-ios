@@ -40,10 +40,10 @@ class CategorySummaryViewController: UIViewController, UITableViewDataSource, UI
         self.delegate = delegate
     }
 
-    func populateFrom(item: DiscoverItem) {
+    func populateFrom(item: DiscoverItem, region: String?, category: DiscoverCategory?) {
         guard let source = item.source else { return }
 
-        DiscoverServerHandler.shared.discoverCategories(source: source, completion: { [weak self] discoverCategories in
+        DiscoverServerHandler.shared.discoverCategories(source: source, authenticated: item.authenticated, completion: { [weak self] discoverCategories in
             DispatchQueue.main.async {
                 guard let strongSelf = self, let discoverCategories = discoverCategories else { return }
 
@@ -72,7 +72,7 @@ class CategorySummaryViewController: UIViewController, UITableViewDataSource, UI
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         let category = categories[indexPath.row]
 
-        let categoryPodcastsController = CategoryPodcastsViewController(category: category)
+        let categoryPodcastsController = CategoryPodcastsViewController(category: category, region: regionCode)
         if let delegate = delegate {
             categoryPodcastsController.registerDiscoverDelegate(delegate)
             delegate.navController()?.pushViewController(categoryPodcastsController, animated: true)

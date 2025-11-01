@@ -1,30 +1,29 @@
-import FMDB
 import Foundation
 import PocketCastsUtils
 
 class DatabaseHelper {
-    class func setup(db: FMDatabase) {
-        do {
-            try db.executeQuery("PRAGMA busy_timeout = 10000", values: nil).close()
+    class func setup(queue: PCDBQueue) {
+        queue.write { db in
+            do {
+                try db.executeQuery("PRAGMA busy_timeout = 10000", values: nil).close()
 
-            var startingSchemaVersion: Int32 = 0
+                let startingSchemaVersion = db.pragmaUserVersion() ?? 0
 
-            let rs = try db.executeQuery("PRAGMA user_version", values: nil)
-            if rs.next() { startingSchemaVersion = rs.int(forColumnIndex: 0) }
-            rs.close()
+                var newSchemaVersion = startingSchemaVersion
+                upgradeIfRequired(schemaVersion: &newSchemaVersion, db: db)
 
-            var newSchemaVersion = startingSchemaVersion
-            upgradeIfRequired(schemaVersion: &newSchemaVersion, db: db)
-
-            if newSchemaVersion != startingSchemaVersion {
-                try db.executeUpdate("PRAGMA user_version = \(newSchemaVersion)", values: nil)
+                if newSchemaVersion != startingSchemaVersion {
+                    FileLog.shared.addMessage("Schema update from \(startingSchemaVersion) to \(newSchemaVersion)")
+                    try db.executeUpdate("PRAGMA user_version = \(newSchemaVersion)", values: nil)
+                }
+            } catch {
+                assertionFailure("Failed to setup database \(db.lastErrorCode()): \(db.lastErrorMessage()) actual error: \(error)")
+                FileLog.shared.addMessage("Failed to setup database \(db.lastErrorCode()): \(db.lastErrorMessage()) actual error: \(error)")
             }
-        } catch {
-            FileLog.shared.addMessage("Failed to setup database \(db.lastErrorCode()): \(db.lastErrorMessage()) actual error: \(error)")
         }
     }
 
-    private class func upgradeIfRequired(schemaVersion: inout Int32, db: FMDatabase) {
+    private class func upgradeIfRequired(schemaVersion: inout Int32, db: PCDatabase) {
         db.beginTransaction()
 
         let failedAt = { (statement: Int) in
@@ -652,6 +651,209 @@ class DatabaseHelper {
                 schemaVersion = 42
             } catch {
                 failedAt(42)
+                return
+            }
+        }
+
+        if schemaVersion < 43 {
+            do {
+                try db.executeUpdate("ALTER TABLE SJEpisode ADD COLUMN deselectedChapters TEXT;", values: nil)
+                try db.executeUpdate("ALTER TABLE SJPodcast ADD COLUMN settings TEXT NOT NULL DEFAULT '';", values: nil)
+                schemaVersion = 43
+            } catch {
+                failedAt(43)
+                return
+            }
+        }
+
+        if schemaVersion < 44 {
+            do {
+                try db.executeUpdate("ALTER TABLE SJEpisode ADD COLUMN deselectedChaptersModified INTEGER NOT NULL DEFAULT 0;", values: nil)
+                schemaVersion = 44
+            } catch {
+                failedAt(44)
+                return
+            }
+        }
+
+        if schemaVersion < 45 {
+            do {
+                try db.executeUpdate("""
+                    CREATE TABLE EpisodeMetadata (
+                        episodeUuid TEXT PRIMARY KEY,
+                        metadata TEXT NOT NULL
+                    );
+                """, values: nil)
+                schemaVersion = 45
+            } catch {
+                failedAt(45)
+                return
+            }
+        }
+
+        if schemaVersion < 46 {
+            do {
+                try db.executeUpdate("DROP TABLE EpisodeMetadata;", values: nil)
+                try db.executeUpdate("ALTER TABLE SJEpisode ADD COLUMN metadata TEXT;", values: nil)
+                schemaVersion = 46
+            } catch {
+                failedAt(46)
+                return
+            }
+        }
+
+        if schemaVersion < 47 {
+            do {
+                try db.executeUpdate("ALTER TABLE SJEpisode ADD COLUMN contentType TEXT;", values: nil)
+                try db.executeUpdate("ALTER TABLE SJUserEpisode ADD COLUMN contentType TEXT;", values: nil)
+                schemaVersion = 47
+            } catch {
+                failedAt(47)
+                return
+            }
+        }
+
+        // Those migrations were some heavy DROP COLUMN that we moved outside of DB startup
+        if schemaVersion < 48 {
+            schemaVersion = 48
+        }
+        if schemaVersion < 49 {
+            schemaVersion = 49
+        }
+
+        if schemaVersion < 50 {
+            // We are doing try? because depending of the cleanup process was done or not these columns could have been dropped and need to recreated
+            // or they still exist because of the changes of version 47.
+            try? db.executeUpdate("ALTER TABLE SJEpisode ADD COLUMN contentType TEXT;", values: nil)
+            try? db.executeUpdate("ALTER TABLE SJUserEpisode ADD COLUMN contentType TEXT;", values: nil)
+            schemaVersion = 50
+        }
+
+        if schemaVersion < 51 {
+            do {
+                try db.executeUpdate("""
+                    CREATE TABLE PlaylistEpisodeHistory (
+                    id INTEGER KEY,
+                    episodePosition INTEGER NOT NULL DEFAULT 0,
+                    episodeUuid TEXT NOT NULL,
+                    playlist_id INTEGER NOT NULL,
+                    upcoming INTEGER NOT NULL DEFAULT 0,
+                    timeModified INTEGER NOT NULL DEFAULT 0,
+                    wasDeleted INTEGER NOT NULL DEFAULT 0,
+                    title TEXT,
+                    podcastUuid TEXT,
+                    date REAL NOT NULL
+                    );
+                """, values: nil)
+
+                try db.executeUpdate("CREATE INDEX IF NOT EXISTS episode_history_date ON PlaylistEpisodeHistory (date);", values: nil)
+
+                schemaVersion = 51
+            } catch {
+                failedAt(51)
+                return
+            }
+        }
+
+        if schemaVersion < 52 {
+            do {
+                try db.executeUpdate("""
+                    CREATE TABLE PodcastFoldersHistory (
+                    podcastUuid TEXT NOT NULL,
+                    folderUuid TEXT NOT NULL,
+                    date REAL NOT NULL
+                    );
+                """, values: nil)
+
+                try db.executeUpdate("CREATE INDEX IF NOT EXISTS podcast_folders_history_date ON PlaylistEpisodeHistory (date);", values: nil)
+
+                schemaVersion = 52
+            } catch {
+                failedAt(52)
+                return
+            }
+        }
+
+        if schemaVersion < 53 {
+            do {
+                try db.executeUpdate("ALTER TABLE SJPodcast ADD COLUMN usedCustomEffectsBefore INTEGER NOT NULL DEFAULT 0;", values: nil)
+                schemaVersion = 53
+            } catch {
+                failedAt(53)
+                return
+            }
+        }
+
+        if schemaVersion < 54 {
+            do {
+                try db.executeUpdate("ALTER TABLE SJPodcast ADD COLUMN podcastHTMLDescription TEXT;", values: nil)
+                schemaVersion = 54
+            } catch {
+                failedAt(54)
+                return
+            }
+        }
+
+        if schemaVersion < 55 {
+            do {
+                try db.executeUpdate("ALTER TABLE SJPodcast ADD COLUMN isPrivate INTEGER NOT NULL DEFAULT 0;", values: nil)
+                schemaVersion = 55
+            } catch {
+                failedAt(55)
+                return
+            }
+        }
+
+        if schemaVersion < 56 {
+            do {
+                try db.executeUpdate("ALTER TABLE SJPodcast ADD COLUMN fundingURL TEXT;", values: nil)
+                schemaVersion = 56
+            } catch {
+                failedAt(56)
+                return
+            }
+        }
+
+        if schemaVersion < 57 {
+            do {
+                // During the FMDB to GRDB migration, we found some users had corrupted episodes
+                // with all columns set to NULL. This cleanup prevents crashes caused by those entries.
+                try db.executeUpdate("DELETE FROM SJEpisode WHERE id IS NULL", values: nil)
+                try db.executeUpdate("DELETE FROM SJPodcast WHERE id IS NULL", values: nil)
+                schemaVersion = 57
+            } catch {
+                failedAt(57)
+                return
+            }
+        }
+
+        if schemaVersion < 58 {
+            do {
+                try db.executeUpdate("ALTER TABLE SJFilteredPlaylist ADD COLUMN rawPlaylistType INTEGER NOT NULL DEFAULT 0;", values: nil)
+                schemaVersion = 58
+            } catch {
+                failedAt(58)
+                return
+            }
+        }
+
+        if schemaVersion < 59 {
+            do {
+                try db.executeUpdate("ALTER TABLE SJFilteredPlaylist DROP COLUMN rawPlaylistType;", values: nil)
+                try db.executeUpdate("ALTER TABLE SJPlaylistEpisode ADD COLUMN playlist_uuid TEXT;", values: nil)
+                schemaVersion = 59
+            } catch {
+                failedAt(59)
+                return
+            }
+        }
+
+        if schemaVersion < 69 {
+            do {
+                try db.executeUpdate("ALTER TABLE SJFilteredPlaylist ADD COLUMN showArchivedEpisodes BOOLEAN DEFAULT FALSE;", values: nil)
+                schemaVersion = 69
+            } catch {
+                failedAt(69)
                 return
             }
         }

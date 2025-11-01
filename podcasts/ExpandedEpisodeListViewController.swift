@@ -59,7 +59,7 @@ class ExpandedEpisodeListViewController: PCViewController, UITableViewDelegate, 
         tableView.estimatedRowHeight = EpisodeListTableViewCell.estimatedCellHeight
         tableView.rowHeight = UITableView.automaticDimension
         tableView.separatorStyle = .none
-        tableView.applyInsetForMiniPlayer()
+        insetAdjuster.setupInsetAdjustmentsForMiniPlayer(scrollView: tableView)
     }
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
@@ -108,7 +108,7 @@ class ExpandedEpisodeListViewController: PCViewController, UITableViewDelegate, 
     func linkTapped() {
         guard let link = podcastCollection.webUrl, let url = URL(string: link) else { return }
 
-        if UserDefaults.standard.bool(forKey: Constants.UserDefaults.openLinksInExternalBrowser) {
+        if Settings.openLinks {
             UIApplication.shared.open(url, options: [:], completionHandler: nil)
         } else {
             present(SFSafariViewController(with: url), animated: true, completion: nil)

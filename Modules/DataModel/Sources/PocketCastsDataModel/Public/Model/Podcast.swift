@@ -1,4 +1,5 @@
 import Foundation
+import PocketCastsUtils
 
 public class Podcast: NSObject, Identifiable {
     @objc public var id = 0 as Int64
@@ -25,6 +26,7 @@ public class Podcast: NSObject, Identifiable {
     @objc public var trimSilenceAmount = 0 as Int32
     @objc public var podcastCategory: String?
     @objc public var podcastDescription: String?
+    @objc public var podcastHTMLDescription: String?
     @objc public var sortOrder = 0 as Int32
     @objc public var startFrom = 0 as Int32
     @objc public var skipLast = 0 as Int32
@@ -50,6 +52,11 @@ public class Podcast: NSObject, Identifiable {
     @objc public var showArchived = false
     @objc public var refreshAvailable = false
     @objc public var folderUuid: String?
+    @objc public var usedCustomEffectsBefore = false
+    @objc public var isPrivate = false
+    @objc public var fundingURL: String?
+
+    public var settings: PodcastSettings = PodcastSettings.defaults
 
     // transient not saved to database
     public var cachedUnreadCount = 0
@@ -63,11 +70,44 @@ public class Podcast: NSObject, Identifiable {
     }
 
     public func autoAddToUpNextOn() -> Bool {
-        autoAddToUpNext == AutoAddToUpNextSetting.addLast.rawValue || autoAddToUpNext == AutoAddToUpNextSetting.addFirst.rawValue
+        if FeatureFlag.newSettingsStorage.enabled {
+            return settings.addToUpNext
+        } else {
+            return autoAddToUpNext == AutoAddToUpNextSetting.addLast.rawValue || autoAddToUpNext == AutoAddToUpNextSetting.addFirst.rawValue
+        }
+    }
+
+    public func autoAddToUpNextSetting() -> AutoAddToUpNextSetting? {
+        if FeatureFlag.newSettingsStorage.enabled {
+            if settings.addToUpNext {
+                switch settings.addToUpNextPosition {
+                case .top:
+                    return .addFirst
+                case .bottom:
+                    return .addLast
+                }
+            } else {
+                return .off
+            }
+        } else {
+            return AutoAddToUpNextSetting(rawValue: autoAddToUpNext)
+        }
+    }
+
+    public func setAutoAddToUpNext(setting: AutoAddToUpNextSetting) {
+        if FeatureFlag.newSettingsStorage.enabled {
+            settings.addToUpNext = setting != .off
+            settings.addToUpNextPosition = setting == .addFirst ? .top : .bottom
+        }
+        autoAddToUpNext = setting.rawValue
     }
 
     public func latestEpisode() -> Episode? {
         DataManager.sharedManager.findLatestEpisode(podcast: self)
+    }
+
+    public func latestEpisodes(limit: Int = 1) -> [Episode] {
+        DataManager.sharedManager.findLatestEpisodes(podcast: self, limit: limit)
     }
 
     public func isSubscribed() -> Bool {
@@ -91,5 +131,43 @@ public class Podcast: NSObject, Identifiable {
         podcast.uuid = "8a778760-a1de-0138-e66a-0acc26574db2"
 
         return podcast
+    }
+}
+
+public enum TrimSilenceAmount: Int32, Codable {
+    case off = 0, low = 3, medium = 5, high = 10
+}
+
+extension TrimSilence {
+    public init(amount: TrimSilenceAmount) {
+        switch amount {
+        case .off:
+            self = .off
+        case .low:
+            self = .mild
+        case .medium:
+            self = .medium
+        case .high:
+            self = .madMax
+        }
+    }
+
+    public var amount: TrimSilenceAmount {
+        switch self {
+        case .off:
+            return .off
+        case .mild:
+            return .low
+        case .medium:
+            return .medium
+        case .madMax:
+            return .high
+        }
+    }
+}
+
+extension Podcast {
+    public override var debugDescription: String {
+        "Podcast: \(uuid) - \(title ?? "missing title")"
     }
 }

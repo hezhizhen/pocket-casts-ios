@@ -18,6 +18,12 @@ struct UpNextLargeWidgetView: View {
 struct LargeUpNextWidgetView: View {
     @Binding var episodes: [WidgetEpisode]
     @Binding var isPlaying: Bool
+    @Environment(\.widgetColorScheme) var colorScheme
+    @Environment(\.isAccentedRenderingMode) var isAccentedRenderingMode
+
+    private var iconAssetName: String {
+        isAccentedRenderingMode ? PCWidgetColorScheme.boldNowPlaying.iconAssetName : colorScheme.iconAssetName
+    }
 
     var body: some View {
         ZStack {
@@ -25,22 +31,29 @@ struct LargeUpNextWidgetView: View {
                 GeometryReader { geometry in
                     VStack(alignment: .leading, spacing: 0) {
                         ZStack {
-                            Rectangle().fill(Color.clear)
+                            Rectangle()
+                                .fill(colorScheme.topBackgroundColor)
                                 .lightBackgroundShadow()
                                 .frame(width: .infinity, height: .infinity)
+                                .backwardWidgetAccentable(isAccentedRenderingMode)
+                                .opacity(isAccentedRenderingMode ? 0.1 : 1)
                             HStack(alignment: .top) {
-                                EpisodeView(episode: firstEpisode, topText: isPlaying ? Text(L10n.nowPlaying.localizedUppercase) : Text(L10n.podcastTimeLeft(CommonWidgetHelper.durationString(duration: firstEpisode.duration)).localizedUppercase), isPlaying: isPlaying)
+                                EpisodeView(episode: firstEpisode, topText: isPlaying ? Text(L10n.nowPlaying.localizedCapitalized) : Text(L10n.podcastTimeLeft(CommonWidgetHelper.durationString(duration: firstEpisode.duration))), isPlaying: isPlaying, isFirstEpisode: true)
                                 Spacer()
-                                Image("logo_red_small")
-                                    .frame(width: 28, height: 28)
+                                Image(iconAssetName)
+                                    .backwardWidgetAccentedRenderingMode(isAccentedRenderingMode)
+                                    .frame(width: CommonWidgetHelper.iconSize, height: CommonWidgetHelper.iconSize)
                                     .unredacted()
                             }
+                            .padding(16)
                         }
-                        .padding(16)
                         .frame(height: geometry.size.height * 82 / 345)
 
                         ZStack {
-                            Rectangle().fill(darkBackgroundColor)
+                            if !isAccentedRenderingMode {
+                                Rectangle()
+                                    .fill(colorScheme.bottomBackgroundColor)
+                            }
 
                             VStack(alignment: .leading, spacing: 10) {
                                 if episodes.count > 1 {
@@ -48,27 +61,18 @@ struct LargeUpNextWidgetView: View {
 
                                         EpisodeView(episode: episode, topText: Text(CommonWidgetHelper.durationString(duration: episode.duration)))
                                             .frame(height: geometry.size.height * 50 / 345)
+                                            .frame(maxWidth: .infinity)
                                     }
                                 }
-
-                                if episodes.count < 5 {
-                                    if episodes.count > 1 {
-                                        if episodes.count != 4 {
-                                            Spacer().frame(height: 1)
-                                        }
-                                        Divider()
-                                            .background(Color(UIColor.opaqueSeparator))
-                                    }
-                                    if episodes.count != 4 {
-                                        Spacer()
-                                    }
+                                else {
+                                    Spacer()
                                     HStack {
                                         Spacer()
                                         HungryForMoreView()
                                         Spacer()
                                     }
-                                    Spacer()
                                 }
+                                Spacer()
                             }
                             .padding(16)
                             .frame(width: .infinity, height: .infinity, alignment: .center)
@@ -87,25 +91,34 @@ struct LargeFilterView: View {
     @Binding var episodes: [WidgetEpisode]
     @Binding var filterName: String?
 
+    @Environment(\.widgetColorScheme) var colorScheme
+    @Environment(\.showsWidgetContainerBackground) var showsWidgetBackground
+    @Environment(\.isAccentedRenderingMode) var isAccentedRenderingMode
+
     var body: some View {
         guard episodes.first != nil else {
             return AnyView(EmptyView())
         }
 
         return AnyView(
-            VStack(alignment: .leading, spacing: 0) {
-                VStack(spacing: 0) {
+            ZStack {
+                if showsWidgetBackground, !isAccentedRenderingMode {
+                    Rectangle().fill(colorScheme.filterViewBackgroundColor)
+                }
+                VStack(alignment: .leading, spacing: 0) {
                     HStack(alignment: .top) {
                         if let filterName = filterName {
                             Text(filterName)
                                 .font(.callout)
                                 .fontWeight(.regular)
-                                .foregroundColor(Color.secondary)
+                                .foregroundColor(colorScheme.filterViewTextColor)
                                 .frame(height: 18)
+                                .backwardWidgetAccentable(isAccentedRenderingMode)
                         }
                         Spacer()
-                        Image("logo_red_small")
-                            .frame(width: 28, height: 28)
+                        Image(colorScheme.filterViewIconAssetName)
+                            .backwardWidgetAccentedRenderingMode(isAccentedRenderingMode)
+                            .frame(width: CommonWidgetHelper.iconSize, height: CommonWidgetHelper.iconSize)
                             .unredacted()
                     }
                     .frame(height: 32)
@@ -115,21 +128,23 @@ struct LargeFilterView: View {
                             HStack {
                                 EpisodeView.createCompactWhenNecessaryView(episode: episode)
                                     .frame(minHeight: 42, maxHeight: 56)
-                                Spacer()
                             }
                         }
                     }
-                }.padding(16)
-                    .background(Rectangle().fill(Color.clear)
-                        .lightBackgroundShadow())
 
-                if episodes.count < 5 {
-                    ZStack {
-                        Rectangle()
-                            .fill(darkBackgroundColor)
-                        HungryForMoreView()
+                    Spacer()
+
+                    if episodes.count == 1 {
+                        HStack {
+                            Spacer()
+                            HungryForMoreView()
+                            Spacer()
+                        }
+                        Spacer()
                     }
                 }
+                .padding(16)
+                .clearBackground()
             }
         )
     }

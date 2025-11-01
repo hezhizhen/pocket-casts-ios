@@ -19,6 +19,8 @@ import PocketCastsDataModel
 
     func effectsDidChange()
 
+    func isReadyToPlay() -> Bool
+
     func supportsSilenceRemoval() -> Bool
     func supportsVolumeBoost() -> Bool
     func supportsGoogleCast() -> Bool
@@ -31,6 +33,8 @@ import PocketCastsDataModel
     func interruptionDidStart()
 
     func internalPlayerForVideoPlayback() -> AVPlayer?
+
+    func setVolume(_ volume: Float)
 }
 
 enum PlaybackError: Error {

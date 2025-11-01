@@ -1,6 +1,22 @@
 import UIKit
 
 class OptionsPickerRootController: UIViewController, UIGestureRecognizerDelegate {
+
+    struct Colors {
+        let title: UIColor
+        let background: UIColor
+
+        init(title: UIColor, background: UIColor) {
+            self.title = title
+            self.background = background
+        }
+
+        init(theme: Theme.ThemeType) {
+            title = ThemeColor.support01(for: theme)
+            background = AppTheme.optionPickerBackgroundColor(for: theme)
+        }
+    }
+
     @objc var overrideStatusBarStyle = AppTheme.defaultStatusBarStyle()
 
     private var stackView: UIStackView!
@@ -25,7 +41,9 @@ class OptionsPickerRootController: UIViewController, UIGestureRecognizerDelegate
         overrideStatusBarStyle
     }
 
-    func setup(title: String?, themeOverride: Theme.ThemeType? = nil, iconTintStyle: ThemeStyle) {
+    func setup(title: String?, themeOverride: Theme.ThemeType? = nil, iconTintStyle: ThemeStyle, colors: Colors? = nil) {
+        let colors = colors ?? Colors(theme: themeOverride ?? Theme.sharedTheme.activeTheme)
+
         view.clipsToBounds = true
         view.layer.cornerRadius = 6
         self.themeOverride = themeOverride
@@ -41,11 +59,8 @@ class OptionsPickerRootController: UIViewController, UIGestureRecognizerDelegate
         stackBgView = UIView()
         stackView.insertSubview(stackBgView, at: 0)
         stackBgView.anchorToAllSidesOf(view: stackView)
-        if let theme = themeOverride {
-            stackBgView.backgroundColor = AppTheme.optionPickerBackgroundColor(for: theme)
-        } else {
-            stackBgView.backgroundColor = AppTheme.optionPickerBackgroundColor()
-        }
+
+        stackBgView.backgroundColor = colors.background
 
         view.addSubview(stackView)
 
@@ -84,7 +99,7 @@ class OptionsPickerRootController: UIViewController, UIGestureRecognizerDelegate
         dismissView.addGestureRecognizer(dismissGestureRecognizer)
 
         if let title = title {
-            addTitle(title)
+            addTitle(title, titleColor: colors.title)
         }
 
         // make actions a bit smaller on tiny phones
@@ -112,6 +127,20 @@ class OptionsPickerRootController: UIViewController, UIGestureRecognizerDelegate
 
     func addDescriptiveActions(title: String, message: String?, icon: String, actions: [OptionAction]) {
         let actionView = DescriptiveActionView(frame: CGRect(x: 0, y: 0, width: view.bounds.width, height: actionHeight), title: title, message: message, icon: icon, actions: actions, delegate: self, themeOverride: themeOverride, iconTintStyle: iconTintStyle)
+        stackView.addArrangedSubview(actionView)
+        NSLayoutConstraint.activate([
+            actionView.leadingAnchor.constraint(equalTo: stackView.leadingAnchor),
+            actionView.trailingAnchor.constraint(equalTo: stackView.trailingAnchor)
+        ])
+        actionView.actionWasAdded()
+
+        actionsAdded += 1
+    }
+
+    func addAttributedDescriptiveActions(title: String, message: String, icon: String, actions: [OptionAction]) {
+        let actionView = DescriptiveActionView(frame: CGRect(x: 0, y: 0, width: view.bounds.width, height: actionHeight), title: title, message: message, icon: icon, actions: actions, delegate: self, themeOverride: themeOverride, iconTintStyle: iconTintStyle) { [weak self] in
+            self?.backgroundTapped()
+        }
         stackView.addArrangedSubview(actionView)
         NSLayoutConstraint.activate([
             actionView.leadingAnchor.constraint(equalTo: stackView.leadingAnchor),
@@ -188,7 +217,7 @@ class OptionsPickerRootController: UIViewController, UIGestureRecognizerDelegate
 
     // MARK: - Drawing Helpers
 
-    private func addTitle(_ title: String) {
+    private func addTitle(_ title: String, titleColor: UIColor) {
         let containerView = UIView()
         containerView.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
@@ -199,7 +228,7 @@ class OptionsPickerRootController: UIViewController, UIGestureRecognizerDelegate
         let label = UILabel()
         label.font = UIFont.systemFont(ofSize: 13, weight: .bold)
         label.text = title
-        label.textColor = ThemeColor.support01(for: themeOverride)
+        label.textColor = titleColor
         label.translatesAutoresizingMaskIntoConstraints = false
         containerView.addSubview(label)
         NSLayoutConstraint.activate([

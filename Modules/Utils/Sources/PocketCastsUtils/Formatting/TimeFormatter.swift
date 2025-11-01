@@ -72,8 +72,11 @@ public class TimeFormatter {
             return formatter.string(from: time) ?? "0:00"
         }
 
-        let formatter = showSeconds ? colonFormatterHours : shortTimeFormatter
-        return formatter.string(from: time) ?? "0:00"
+        if showSeconds {
+            return colonFormatterHours.string(from: time) ?? "0:00"
+        } else {
+            return Duration.seconds(time).formatted(.units(allowed: [.hours, .minutes], width: .narrow))
+        }
     }
 
     public func singleUnitFormattedShortestTime(time: TimeInterval) -> String {

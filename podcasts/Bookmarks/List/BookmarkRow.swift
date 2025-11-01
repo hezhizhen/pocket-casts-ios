@@ -22,7 +22,7 @@ struct BookmarkRow<Style: BookmarksStyle>: View {
     var body: some View {
         let selected = viewModel.isSelected(bookmark)
         MultiSelectRow(showSelectButton: viewModel.isMultiSelecting, selected: selected) {
-            HStack(spacing: RowConstants.padding) {
+            HStack(spacing: RowConstants.spacing) {
                 imageView
                 detailsView
                 playButtonView
@@ -33,7 +33,8 @@ struct BookmarkRow<Style: BookmarksStyle>: View {
             }
         }
         .selectButtonStyle(tintColor: style.selectButton, checkColor: style.selectCheck, strokeColor: style.selectButtonStroke)
-        .padding(RowConstants.padding)
+        .padding(.horizontal, RowConstants.horizontalPadding)
+        .padding(.vertical, RowConstants.verticalPadding)
         .animation(.default, value: viewModel.isMultiSelecting)
 
         // Display a highlight when tapped, or the row is selected
@@ -44,9 +45,15 @@ struct BookmarkRow<Style: BookmarksStyle>: View {
         .animation(.linear, value: selected)
     }
 
+    @ViewBuilder
     private var imageView: some View {
-        rowModel.episode.map {
-            EpisodeImage(episode: $0)
+        if let episode = rowModel.episode {
+            EpisodeImage(episode: episode)
+                .frame(width: imageSize, height: imageSize)
+                .cornerRadius(8)
+        } else {
+            Rectangle()
+                .foregroundColor(style.tertiaryText)
                 .frame(width: imageSize, height: imageSize)
                 .cornerRadius(8)
         }
@@ -60,6 +67,7 @@ struct BookmarkRow<Style: BookmarksStyle>: View {
                     Text($0)
                         .foregroundStyle(style.tertiaryText)
                         .font(style: .caption, weight: .semibold)
+                        .lineLimit(1)
                 }
 
                 Text(rowModel.title)
@@ -69,6 +77,7 @@ struct BookmarkRow<Style: BookmarksStyle>: View {
                 Text(rowModel.subtitle)
                     .foregroundStyle(style.tertiaryText)
                     .font(style: .caption, weight: .semibold)
+                    .lineLimit(1)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         } onTapped: {
@@ -96,9 +105,9 @@ struct BookmarkRow<Style: BookmarksStyle>: View {
     }
 
     // MARK: - Play Button View
-    private struct PlayButton<Style: BookmarksStyle>: View {
+    private struct PlayButton<ButtonStyle: BookmarksStyle>: View {
         let title: String
-        @ObservedObject var style: Style
+        @ObservedObject var style: ButtonStyle
 
         var body: some View {
             HStack(spacing: 10) {
@@ -110,7 +119,7 @@ struct BookmarkRow<Style: BookmarksStyle>: View {
                     .renderingMode(.template)
             }
             .foregroundStyle(style.playButtonText)
-            .padding(.horizontal, RowConstants.padding)
+            .padding(.horizontal, RowConstants.horizontalPadding)
             .padding(.vertical, RowConstants.playButtonVerticalPadding)
             .background(style.playButtonBackground)
             .cornerRadius(.infinity) // Always rounded
@@ -126,6 +135,8 @@ struct BookmarkRow<Style: BookmarksStyle>: View {
 }
 
 private enum RowConstants {
-    static let padding = 16.0
+    static let horizontalPadding = 16.0
+    static let spacing = 12.0
+    static let verticalPadding = 12.0
     static let playButtonVerticalPadding = 8.0
 }

@@ -1,7 +1,6 @@
 import Foundation
 import PocketCastsDataModel
 import PocketCastsUtils
-import SwiftyJSON
 #if os(watchOS)
     import WatchKit
 #else
@@ -39,6 +38,8 @@ public class MainServerHandler {
 
         return queue
     }()
+
+    private let tokenHelper = TokenHelper.shared
 
     struct PodcastSearchQuery: BaseRequest {
         var q: String?
@@ -200,12 +201,13 @@ public class MainServerHandler {
     }
 
     public func refresh(podcasts: [Podcast], completion: @escaping (PodcastRefreshResponse?) -> Void) {
+        FileLog.shared.addMessage("Refresh - Started)")
         guard let request = createRefreshRequest(podcasts: podcasts) else {
             completion(PodcastRefreshResponse.failedResponse())
             return
         }
 
-        TokenHelper.callSecureUrl(request: request) { response, data, error in
+        tokenHelper.callSecureUrl(request: request) { response, data, error in
             let statusCode = response?.statusCode ?? 0
 
             guard statusCode == ServerConstants.HttpConstants.ok, let data = data else {
@@ -217,7 +219,7 @@ public class MainServerHandler {
                 completion(PodcastRefreshResponse.failedResponse())
                 return
             }
-
+            FileLog.shared.addMessage("Decoding Refresh Response)")
             let refreshResponse = ServerHelper.decodeRefreshResponse(from: data)
             completion(refreshResponse)
         }
@@ -235,15 +237,15 @@ public class MainServerHandler {
         let pushEnabled = ServerConfig.shared.syncDelegate?.isPushEnabled() ?? false
 
         var jsonRequest = jsonWithStandardParams(uniqueId: uniqueId)
-        jsonRequest["push_sound"].string = "11" // for legacy reasons, this is always the push sound we send, since it's no longer configurable
-        jsonRequest["podcasts"].string = podcasts.map(\.uuid).joined(separator: ",")
-        jsonRequest["last_episodes"].string = podcasts.map { $0.forceRefreshEpisodeFrom ?? $0.latestEpisodeUuid ?? "" }.joined(separator: ",")
-        jsonRequest["push_messages_on"].string = podcasts.map { (pushEnabled && $0.pushEnabled) ? "1" : "0" }.joined()
+        jsonRequest["push_sound"] = "11" // for legacy reasons, this is always the push sound we send, since it's no longer configurable
+        jsonRequest["podcasts"] = podcasts.map(\.uuid).joined(separator: ",")
+        jsonRequest["last_episodes"] = podcasts.map { $0.forceRefreshEpisodeFrom ?? $0.latestEpisodeUuid ?? "" }.joined(separator: ",")
+        jsonRequest["push_messages_on"] = podcasts.map { (pushEnabled && $0.isPushEnabled) ? "1" : "0" }.joined()
         if let pushToken = ServerSettings.pushToken() {
-            jsonRequest["push_token"].string = pushToken
+            jsonRequest["push_token"] = pushToken
         }
-        jsonRequest["push_on"].string = pushEnabled ? "true" : "false"
-        guard let data = try? jsonRequest.rawData() else {
+        jsonRequest["push_on"] = pushEnabled ? "true" : "false"
+        guard let data = try? JSONSerialization.data(withJSONObject: jsonRequest) else {
             FileLog.shared.addMessage("Failed to create refresh request")
             return nil
         }
@@ -292,8 +294,8 @@ public class MainServerHandler {
         }
 
         var jsonRequest = jsonWithStandardParams(uniqueId: uniqueId)
-        jsonRequest["podcast_uuid"].string = podcast.uuid
-        guard let data = try? jsonRequest.rawData() else {
+        jsonRequest["podcast_uuid"] = podcast.uuid
+        guard let data = try? JSONSerialization.data(withJSONObject: jsonRequest) else {
             FileLog.shared.addMessage("Failed to create refreshPodcastFeed request")
             completion(false)
 
@@ -351,22 +353,89 @@ public class MainServerHandler {
         }.resume()
     }
 
-    private func jsonWithStandardParams(uniqueId: String) -> JSON {
-        var json = JSON()
+    public func updatePodcast(uuid: String, lastEpisodeUuid: String?) async throws -> Bool {
+        var query = "podcast_uuid=\(uuid)"
+        if let lastEpisodeUuid {
+            query += "&last_episode_uuid=\(lastEpisodeUuid)"
+        }
+        let url = ServerHelper.asUrl(ServerConstants.Urls.main() + "api/v1/update_podcast?\(query)")
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+
+        FileLog.shared.console("Update Podcast API start request \(url.absoluteString)")
+
+        if Task.isCancelled {
+            return false
+        }
+
+        let response = try await URLSession.shared.data(for: request)
+        guard let urlResponse = response.1 as? HTTPURLResponse else {
+            return false
+        }
+
+        FileLog.shared.console("Update Podcast API response status code \(urlResponse.statusCode)")
+
+        var statusCode = urlResponse.statusCode
+        let allHeaderFields = urlResponse.allHeaderFields
+        while statusCode == 202 {
+            guard
+                let location = allHeaderFields["Location"] as? String,
+                let retry = allHeaderFields["retry-after"] as? String,
+                let interval = UInt(retry) else {
+                FileLog.shared.console("Update Podcast API response incorrect header")
+                return false
+            }
+            FileLog.shared.console("Poll Podcast API with delay of \(interval) sec")
+            let delay = UInt64(interval * 1_000_000_000)
+            try await Task<Never, Never>.sleep(nanoseconds: delay)
+            if Task.isCancelled {
+                return false
+            }
+            guard let newUrlResponse = try await pollUpdatePodcast(url: location) else {
+                FileLog.shared.console("Poll Podcast API no response")
+                return false
+            }
+            statusCode = newUrlResponse.statusCode
+            FileLog.shared.console("Poll Podcast API new status code \(statusCode)")
+        }
+
+        if statusCode == 200 {
+            return true
+        }
+        return false
+    }
+
+    private func pollUpdatePodcast(url: String) async throws -> HTTPURLResponse? {
+        guard let url = URL(string: url) else {
+            FileLog.shared.console("Poll Podcast API anavailable url: \(url)")
+            return nil
+        }
+        FileLog.shared.console("Poll Podcast API start fetching \(url)")
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+
+        let response = try await URLSession.shared.data(for: request)
+        return response.1 as? HTTPURLResponse
+    }
+
+    private func jsonWithStandardParams(uniqueId: String) -> [String: Any] {
+        var json: [String: Any] = [:]
         let locale = Locale.current
-        json["l"].string = locale.languageCode
-        json["c"].string = locale.regionCode
+        json["l"] = locale.languageCode
+        json["c"] = locale.regionCode
 
         #if os(watchOS)
-            json["m"].string = WKInterfaceDevice.current().systemVersion
+            json["m"] = WKInterfaceDevice.current().systemVersion
         #else
-            json["m"].string = UIDevice.current.systemVersion
+            json["m"] = UIDevice.current.systemVersion
         #endif
 
-        json["dt"].string = MainServerHandler.deviceType
-        json["v"].string = MainServerHandler.parserVersion
-        json["device"].string = uniqueId
-        json["av"].string = ServerConfig.shared.syncDelegate?.appVersion()
+        json["dt"] = MainServerHandler.deviceType
+        json["v"] = MainServerHandler.parserVersion
+        json["device"] = uniqueId
+        json["av"] = ServerConfig.shared.syncDelegate?.appVersion()
 
         return json
     }

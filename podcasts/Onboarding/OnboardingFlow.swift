@@ -1,4 +1,5 @@
 import Foundation
+import PocketCastsUtils
 
 struct OnboardingFlow {
     typealias Context = [String: Any]
@@ -6,56 +7,99 @@ struct OnboardingFlow {
     static var shared = OnboardingFlow()
 
     private(set) var currentFlow: Flow = .none
-    private var source: String? = nil
+    private(set) var source: PlusUpgradeViewSource? = nil
 
-    mutating func begin(flow: Flow, in controller: UIViewController? = nil, source: String? = nil, context: Context? = nil) -> UIViewController {
+    private(set) var accountCreated: ((Bool)->())?
+
+    mutating func begin(flow: Flow, in controller: UIViewController? = nil, source: PlusUpgradeViewSource, context: Context? = nil, customTitle: String? = nil, accountCreated: ((Bool)->())? = nil) -> UIViewController {
         self.currentFlow = flow
         self.source = source
+        self.accountCreated = accountCreated
 
         let navigationController = controller as? UINavigationController
 
         let flowController: UIViewController
         switch flow {
-        case .plusUpsell, .endOfYearUpsell:
+        case .plusUpsell, .endOfYearUpsell, .suggestedFolderUpsell:
             // Only the upsell flow needs an unknown source
-            self.source = source ?? "unknown"
-            flowController = upgradeController(in: navigationController, context: context)
+            self.source = source
+            flowController = upgradeController(in: navigationController,
+                                               viewSource: source,
+                                               context: context,
+                                               customTitle: customTitle)
 
         case .plusAccountUpgrade:
-            if FeatureFlag.patron.enabled {
-                self.source = source ?? "unknown"
-                flowController = upgradeController(in: navigationController, context: context)
+            self.source = source
+            let product = context?["product"] as? ProductInfo
+            if FeatureFlag.newOnboardingUpgrade.enabled {
+                flowController = UpgradeAccountViewModel.make(in: controller,
+                                                              flowSource: .accountScreen,
+                                                              viewSource: source,
+                                                              plan: product?.plan ?? .plus,
+                                                              frequency: product?.frequency ?? .yearly)
             } else {
-                flowController = PlusPurchaseModel.make(in: controller, plan: .plus, selectedPrice: .yearly)
+                flowController = PlusPurchaseModel.make(in: controller,
+                                                        plan: product?.plan ?? .plus,
+                                                        selectedPrice: product?.frequency ?? .yearly,
+                                                        customTitle: customTitle)
             }
 
         case .patronAccountUpgrade:
-            self.source = source ?? "unknown"
-            let config = PlusLandingViewModel.Config(products: [.patron], displayProduct: .init(plan: .patron, frequency: .yearly))
-
-            flowController = PlusLandingViewModel.make(in: navigationController,
-                                                       from: .upsell,
-                                                       config: config)
+            self.source = source
+            if FeatureFlag.newOnboardingUpgrade.enabled {
+                flowController = UpgradeAccountViewModel.make(in: controller,
+                                                              flowSource: .upsell,
+                                                              viewSource: source,
+                                                              plan: .patron,
+                                                              frequency: .yearly,
+                                                              )
+            } else {
+                let config = PlusLandingViewModel.Config(products: [.patron], displayProduct: .init(plan: .patron, frequency: .yearly))
+                flowController = PlusLandingViewModel.make(in: navigationController,
+                                                           from: .upsell,
+                                                           viewSource: source,
+                                                           config: config,
+                                                           customTitle: customTitle)
+            }
 
         case .plusAccountUpgradeNeedsLogin:
             flowController = LoginCoordinator.make(in: navigationController, continuePurchasing: .init(plan: .plus, frequency: .yearly))
 
-        case .initialOnboarding, .loggedOut: fallthrough
+        case .encourageAccountCreation:
+            flowController = InformationalModalViewModel.makeController()
+
+        case .initialOnboarding:
+            flowController = LoginCoordinator.make(in: navigationController, isOnboarding: true)
         default:
-            flowController = LoginCoordinator.make(in: navigationController)
+            flowController = LoginCoordinator.make(in: navigationController, isOnboarding: false)
         }
 
         return flowController
     }
 
-    private func upgradeController(in controller: UINavigationController?, context: Context?) -> UIViewController {
-        let product = context?["product"] as? Constants.ProductInfo
-        return PlusLandingViewModel.make(in: controller, from: .upsell, config: .init(displayProduct: product))
+    private func upgradeController(in controller: UINavigationController?, viewSource: PlusUpgradeViewSource, context: Context?, customTitle: String? = nil) -> UIViewController {
+        let product = context?["product"] as? ProductInfo
+        if FeatureFlag.newOnboardingUpgrade.enabled {
+            return UpgradeAccountViewModel.make(in: controller,
+                                                flowSource: .upsell,
+                                                viewSource: viewSource,
+                                                plan: product?.plan ?? .plus,
+                                                frequency: product?.frequency ?? .yearly)
+        } else {
+            return PlusLandingViewModel.make(in: controller,
+                                             from: .upsell,
+                                             viewSource: viewSource,
+                                             config: .init(displayProduct: product),
+                                             customTitle: customTitle)
+        }
     }
 
     /// Resets the internal flow state to none and clears any analytics sources
     mutating func reset() {
-        source = nil
+        if (currentFlow == .initialOnboarding) || (currentFlow == .encourageAccountCreation) {
+            NavigationManager.sharedManager.showNotificationsPermissionsModal()
+        }
+        source = .unknown
         currentFlow = .none
 
         NotificationCenter.default.post(name: .onboardingFlowDidDismiss, object: nil)
@@ -63,7 +107,7 @@ struct OnboardingFlow {
 
     /// Updates the source passed for analytics
     /// Any `track` events will use this new source
-    mutating func updateAnalyticsSource(_ source: String) {
+    mutating func updateAnalyticsSource(_ source: PlusUpgradeViewSource) {
         self.source = source
     }
 
@@ -72,7 +116,7 @@ struct OnboardingFlow {
 
         // Append the source, only if it's set because not every event needs a source
         if let source {
-            defaultProperties["source"] = source
+            defaultProperties["source"] = source.rawValue
         }
 
         let mergedProperties = defaultProperties.merging(properties ?? [:]) { current, _ in current }
@@ -120,7 +164,13 @@ struct OnboardingFlow {
         /// When the user is brought into the onboarding flow from the End Of Year stories
         case endOfYearUpsell
 
+        case suggestedFolderUpsell = "suggested_folder_upsell"
+
         case promoCode = "promo_code"
+
+        case referralCode = "referral_code"
+
+        case encourageAccountCreation = "encourage_account_creation"
 
         var analyticsDescription: String { rawValue }
 
@@ -128,7 +178,7 @@ struct OnboardingFlow {
         /// should be dismissed right away
         var shouldDismiss: Bool {
             switch self {
-            case .sonosLink, .forcedLoggedOut, .promoCode:
+            case .sonosLink, .forcedLoggedOut, .promoCode, .referralCode:
                 return true
             default:
                 return false
@@ -139,7 +189,7 @@ struct OnboardingFlow {
         /// dismissed right away
         var shouldDismissAfterPurchase: Bool {
             switch self {
-            case .endOfYearUpsell:
+            case .endOfYearUpsell, .suggestedFolderUpsell:
                 true
             default:
                 false

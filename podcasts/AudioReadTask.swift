@@ -46,7 +46,13 @@ class AudioReadTask {
 
         if playPositionHint > 0 {
             currentFramePosition = framePositionForTime(playPositionHint).framePosition
-            audioFile.framePosition = currentFramePosition
+            if currentFramePosition < audioFile.length {
+                FileLog.shared.addMessage("Setting framePosition to \(currentFramePosition) for file: \(audioFile.url.lastPathComponent)")
+                audioFile.framePosition = currentFramePosition
+            } else {
+                FileLog.shared.addMessage("Attempted to seek past EOF: \(currentFramePosition) >= \(audioFile.length), file: \(audioFile.url.lastPathComponent)")
+                audioFile.framePosition = max(0, audioFile.length - 1)
+            }
         }
     }
 
@@ -195,8 +201,7 @@ class AudioReadTask {
         // In order to prevent this issue, we convert a mono buffer to stereo buffer
         // For more info, see: https://github.com/Automattic/pocket-casts-ios/issues/62
         var audioBuffer: BufferedAudio
-        if #available(iOS 16, *),
-           let audioPCMBuffer = audioPCMBuffer,
+        if let audioPCMBuffer = audioPCMBuffer,
            audioPCMBuffer.audioBufferList.pointee.mNumberBuffers == 1,
            let twoChannelsFormat = AVAudioFormat(standardFormatWithSampleRate: audioFile.processingFormat.sampleRate, channels: 2),
            let twoChannnelBuffer = AVAudioPCMBuffer(pcmFormat: twoChannelsFormat, frameCapacity: audioPCMBuffer.frameCapacity) {
@@ -224,7 +229,7 @@ class AudioReadTask {
                 // don't trim silence from the last 5 seconds
                 rms = 1
             } else {
-                rms = (channelCount == 1) ? calculateRms(bufferListPointer[0]) : calculateStereoRms(bufferListPointer[0], rightBuffer: bufferListPointer[1])
+                rms = (channelCount == 1) ? AudioUtils.calculateRms(bufferListPointer[0]) : AudioUtils.calculateStereoRms(bufferListPointer[0], rightBuffer: bufferListPointer[1])
             }
 
             if rms > minRMS, !foundGap {
@@ -292,42 +297,6 @@ class AudioReadTask {
         if !cancelled.value {
             bufferManager.push(buffer)
         }
-    }
-
-    private func calculateRms(_ audioBuffer: AudioBuffer) -> Float32 {
-        var sum: Float32 = 0.0
-        let bufferSize = Float32(audioBuffer.mDataByteSize) / bufferByteSize
-        guard let buffer = audioBuffer.mData?.bindMemory(to: Float32.self, capacity: Int(bufferSize)) else { return 0 }
-
-        for i in 0 ..< Int(bufferSize) {
-            sum += buffer[i] * buffer[i]
-        }
-
-        return sqrt(sum / bufferSize)
-    }
-
-    private func calculateStereoRms(_ leftBuffer: AudioBuffer, rightBuffer: AudioBuffer) -> Float32 {
-        var sum: Float32 = 0.0
-        let leftSize = Float32(leftBuffer.mDataByteSize) / bufferByteSize
-        if let left = leftBuffer.mData?.bindMemory(to: Float32.self, capacity: Int(leftSize)) {
-            for i in 0 ..< Int(leftSize) {
-                sum += left[i] * left[i]
-            }
-        }
-
-        let leftRms = sqrt(sum / leftSize)
-
-        sum = 0
-        let rightSize = Float32(rightBuffer.mDataByteSize) / bufferByteSize
-        if let right = rightBuffer.mData?.bindMemory(to: Float32.self, capacity: Int(rightSize)) {
-            for i in 0 ..< Int(rightSize) {
-                sum += right[i] * right[i]
-            }
-        }
-
-        let rightRms = sqrt(sum / rightSize)
-
-        return (leftRms + rightRms) / 2
     }
 
     private func gapSizeForSilenceAmount() -> Int {

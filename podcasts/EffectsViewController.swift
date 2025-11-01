@@ -125,14 +125,39 @@ class EffectsViewController: SimpleNotificationsViewController {
             let highAction = SegmentedAction(title: TrimSilenceAmount.high.description)
             trimSilenceAmountControl.setActions([lowAction, mediumAction, highAction])
 
-            trimSilenceAmountControl.unselectedBgColor = UIColor.clear
+            if isCustomPlaybackSettingsEnabled {
+                trimSilenceAmountControl.backgroundColor = ThemeColor.playerContrast06()
+            } else {
+                trimSilenceAmountControl.backgroundColor = .clear
+                trimSilenceAmountControl.unselectedBgColor = .clear
+            }
 
             trimSilenceAmountControl.addTarget(self, action: #selector(trimSilenceAmountChanged), for: .valueChanged)
         }
     }
 
+    @IBOutlet weak var playbackSettingsSegmentedControl: UISegmentedControl! {
+        didSet {
+            let isUserEpisode = PlaybackManager.shared.currentEpisode()?.isUserEpisode == true
+            let shouldDisplaySegmentedControl = isCustomPlaybackSettingsEnabled && !isUserEpisode
+            playbackSettingsSegmentedControl.isHidden = !shouldDisplaySegmentedControl
+
+            playbackSettingsSegmentedControl.setTitle(L10n.playbackEffectAllPodcasts, forSegmentAt: 0)
+            playbackSettingsSegmentedControl.setTitle(L10n.playbackEffectThisPodcast, forSegmentAt: 1)
+
+            playbackSettingsSegmentedControl.addTarget(self, action: #selector(playbackSettingsDestinationChanged), for: .valueChanged)
+        }
+    }
+
     @IBOutlet var minusBtn: UIButton!
     @IBOutlet var plusBtn: UIButton!
+
+    @IBOutlet weak var speedControlTopConstraint: NSLayoutConstraint! {
+        didSet {
+            let isUserEpisode = PlaybackManager.shared.currentEpisode()?.isUserEpisode == true
+            speedControlTopConstraint.isActive = isCustomPlaybackSettingsEnabled && !isUserEpisode
+        }
+    }
 
     @IBOutlet var trimSilenceSpeedsToLabelConstraint: NSLayoutConstraint! {
         didSet {
@@ -154,11 +179,27 @@ class EffectsViewController: SimpleNotificationsViewController {
 
     private var didChangePlaybackSpeed: Bool = false
 
+    private var playbackSpeedDebouncer: Debounce = .init(delay: 1)
+
+    private var isCustomPlaybackSettingsEnabled: Bool {
+        #if APPCLIP
+        false
+        #else
+        FeatureFlag.customPlaybackSettings.enabled
+        #endif
+    }
+
     override func viewDidLoad() {
         super.viewDidLoad()
+        view.translatesAutoresizingMaskIntoConstraints = false
 
         updateColors()
         updateControls()
+        setupAccessibility()
+
+        if isCustomPlaybackSettingsEnabled {
+            playbackSettingsSegmentedControl.selectedSegmentIndex = PlaybackManager.shared.isCurrentEffectGlobal() ? 0 : 1
+        }
         if let episode = PlaybackManager.shared.currentEpisode() as? Episode, let podcast = episode.parentPodcast() {
             clearForPodcastImage.setPodcast(uuid: podcast.uuid, size: .list)
         }
@@ -190,6 +231,11 @@ class EffectsViewController: SimpleNotificationsViewController {
         addCustomObserver(Constants.Notifications.playbackTrackChanged, selector: #selector(updateControls))
         addCustomObserver(Constants.Notifications.playbackEffectsChanged, selector: #selector(updateControls))
         addCustomObserver(Constants.Notifications.themeChanged, selector: #selector(updateColors))
+
+        if isCustomPlaybackSettingsEnabled {
+            analyticsPlaybackHelper.currentSource = analyticsSource
+            analyticsPlaybackHelper.viewDidAppear(currentSettings: currentPlaybackSettings())
+        }
     }
 
     override func viewDidDisappear(_ animated: Bool) {
@@ -201,6 +247,11 @@ class EffectsViewController: SimpleNotificationsViewController {
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
 
+        if isCustomPlaybackSettingsEnabled {
+            PlaybackManager.shared.applyCurrentEffect()
+            return
+        }
+
         guard didChangePlaybackSpeed else {
             return
         }
@@ -208,17 +259,25 @@ class EffectsViewController: SimpleNotificationsViewController {
         analyticsPlaybackHelper.currentSource = analyticsSource
 
         let speed = PlaybackManager.shared.effects().playbackSpeed
-        AnalyticsPlaybackHelper.shared.playbackSpeedChanged(to: speed)
+        analyticsPlaybackHelper.playbackSpeedChanged(to: speed)
     }
 
     @IBAction func minusTapped(_ sender: Any) {
         didChangePlaybackSpeed = true
         PlaybackManager.shared.decreasePlaybackSpeed()
+
+        if isCustomPlaybackSettingsEnabled {
+            trackPlaybackSpeedChanged()
+        }
     }
 
     @IBAction func plusTapped(_ sender: Any) {
         didChangePlaybackSpeed = true
         PlaybackManager.shared.increasePlaybackSpeed()
+
+        if isCustomPlaybackSettingsEnabled {
+            trackPlaybackSpeedChanged()
+        }
     }
 
     @IBAction func trimSilenceChanged(_ sender: UISwitch) {
@@ -232,7 +291,11 @@ class EffectsViewController: SimpleNotificationsViewController {
         PlaybackManager.shared.changeEffects(effects)
 
         analyticsPlaybackHelper.currentSource = analyticsSource
-        analyticsPlaybackHelper.trimSilenceToggled(enabled: sender.isOn)
+        if isCustomPlaybackSettingsEnabled {
+            analyticsPlaybackHelper.trimSilenceToggled(enabled: sender.isOn, currentSettings: currentPlaybackSettings())
+        } else {
+            analyticsPlaybackHelper.trimSilenceToggled(enabled: sender.isOn)
+        }
     }
 
     @objc private func trimSilenceAmountChanged() {
@@ -243,7 +306,19 @@ class EffectsViewController: SimpleNotificationsViewController {
         PlaybackManager.shared.changeEffects(effects)
 
         analyticsPlaybackHelper.currentSource = analyticsSource
-        analyticsPlaybackHelper.trimSilenceAmountChanged(amount: amount)
+        if isCustomPlaybackSettingsEnabled {
+            analyticsPlaybackHelper.trimSilenceAmountChanged(amount: amount, currentSettings: currentPlaybackSettings())
+        } else {
+            analyticsPlaybackHelper.trimSilenceAmountChanged(amount: amount)
+        }
+    }
+
+    @objc private func playbackSettingsDestinationChanged() {
+        let applyLocalSettings = playbackSettingsSegmentedControl.selectedSegmentIndex == 1
+        PlaybackManager.shared.overrideEffectsToggled(applyLocalSettings: applyLocalSettings)
+        updateControls()
+        analyticsPlaybackHelper.currentSource = analyticsSource
+        analyticsPlaybackHelper.effectSettingsChanged(currentSettings: currentPlaybackSettings())
     }
 
     @IBAction func volumeBoostChanged(_ sender: UISwitch) {
@@ -253,16 +328,29 @@ class EffectsViewController: SimpleNotificationsViewController {
         PlaybackManager.shared.changeEffects(effects)
 
         analyticsPlaybackHelper.currentSource = analyticsSource
-        analyticsPlaybackHelper.volumeBoostToggled(enabled: sender.isOn)
+        if isCustomPlaybackSettingsEnabled {
+            analyticsPlaybackHelper.volumeBoostToggled(enabled: sender.isOn, currentSettings: currentPlaybackSettings())
+        } else {
+            analyticsPlaybackHelper.volumeBoostToggled(enabled: sender.isOn)
+        }
     }
 
     @IBAction func clearForPodcastTapped(_ sender: Any) {
         guard let episode = PlaybackManager.shared.currentEpisode() as? Episode, let podcast = episode.parentPodcast() else { return }
 
-        podcast.overrideGlobalEffects = false
+        podcast.isEffectsOverridden = false
         DataManager.sharedManager.save(podcast: podcast)
         PlaybackManager.shared.effectsChangedExternally()
         updateClearView()
+    }
+
+    private func trackPlaybackSpeedChanged() {
+        playbackSpeedDebouncer.call { [weak self] in
+            guard let self else { return }
+            analyticsPlaybackHelper.currentSource = analyticsSource
+            let speed = PlaybackManager.shared.effects().playbackSpeed
+            analyticsPlaybackHelper.playbackSpeedChanged(to: speed, currentSettings: currentPlaybackSettings())
+        }
     }
 
     @objc private func updateControls() {
@@ -277,6 +365,10 @@ class EffectsViewController: SimpleNotificationsViewController {
     }
 
     private func updateClearView() {
+        // We don't need a clear view if the FF is enbaled
+        if isCustomPlaybackSettingsEnabled {
+            return
+        }
         guard let episode = PlaybackManager.shared.currentEpisode() as? Episode, let podcast = episode.parentPodcast() else {
             clearForPodcastView.isHidden = true
             customEffectsToVolumeBoostConstraint.isActive = false
@@ -284,21 +376,35 @@ class EffectsViewController: SimpleNotificationsViewController {
             return
         }
 
-        customEffectsToVolumeBoostConstraint.isActive = podcast.overrideGlobalEffects
-        clearForPodcastView.isHidden = !podcast.overrideGlobalEffects
+        customEffectsToVolumeBoostConstraint.isActive = podcast.isEffectsOverridden
+        clearForPodcastView.isHidden = !podcast.isEffectsOverridden
     }
 
     private func updateRemoveSilenceViews() {
         let effects = PlaybackManager.shared.effects()
         trimSilenceSwitch.isOn = effects.trimSilence.isEnabled()
 
-        trimSilenceSpeedsToLabelConstraint.isActive = effects.trimSilence.isEnabled()
+        let isEnabled = effects.trimSilence.isEnabled()
+
+        trimSilenceSpeedsToLabelConstraint.isActive = isEnabled
+        let wasHidden = trimSilenceAmountControl.isHidden
         UIView.animate(withDuration: 0.3) {
-            self.trimSilenceAmountControl.alpha = effects.trimSilence.isEnabled() ? 1 : 0
+            self.trimSilenceAmountControl.alpha = isEnabled ? 1 : 0
             self.view.layoutIfNeeded()
         }
 
+        // Hide from accessibility when not enabled to prevent VoiceOver getting stuck
+        trimSilenceAmountControl.isAccessibilityElement = isEnabled
+        trimSilenceAmountControl.accessibilityElementsHidden = !isEnabled
+        trimSilenceAmountControl.isHidden = !isEnabled
+
         trimSilenceAmountControl.selectedIndex = trimSilenceAmountToIndex(effects.trimSilence)
+
+        // Update accessibility order when trim silence state changes
+        setupAccessibilityOrder(trimSilenceEnabled: isEnabled)
+        if isEnabled && wasHidden {
+            UIAccessibility.post(notification: .layoutChanged, argument: trimSilenceAmountControl)
+        }
 
         let timeSaved = StatsManager.shared.timeSavedDynamicSpeedInclusive()
         if timeSaved < 60 {
@@ -312,6 +418,10 @@ class EffectsViewController: SimpleNotificationsViewController {
     private func speedTapped() {
         didChangePlaybackSpeed = true
         PlaybackManager.shared.toggleDefinedPlaybackSpeed()
+
+        if isCustomPlaybackSettingsEnabled {
+            trackPlaybackSpeedChanged()
+        }
     }
 
     private func updateSpeedBtn() {
@@ -322,6 +432,9 @@ class EffectsViewController: SimpleNotificationsViewController {
         speedBtn.strokeColor = speedBtn.isOn ? ThemeColor.playerContrast01() : ThemeColor.playerContrast02()
         speedBtn.textColor = speedBtn.isOn ? PlayerColorHelper.playerBackgroundColor01() : ThemeColor.playerContrast01()
         speedBtn.accessibilityLabel = L10n.accessibilityPlayerEffectsPlaybackSpeed(effects.playbackSpeed.localized(.spellOut))
+
+        // Post accessibility notification for speed changes
+        UIAccessibility.post(notification: .announcement, argument: speedBtn.accessibilityLabel)
     }
 
     @objc private func updateColors() {
@@ -330,10 +443,25 @@ class EffectsViewController: SimpleNotificationsViewController {
         volumeBoostSwitch.onTintColor = PlayerColorHelper.playerHighlightColor02(for: .dark)
         trimSilenceSwitch.onTintColor = PlayerColorHelper.playerHighlightColor02(for: .dark)
 
-        trimSilenceAmountControl.lineColor = ThemeColor.playerContrast02()
-        trimSilenceAmountControl.unselectedItemColor = ThemeColor.playerContrast01()
-        trimSilenceAmountControl.selectedBgColor = ThemeColor.playerContrast01()
-        trimSilenceAmountControl.selectedItemColor = PlayerColorHelper.playerBackgroundColor01()
+        if isCustomPlaybackSettingsEnabled {
+            trimSilenceAmountControl.lineColor = .clear
+            trimSilenceAmountControl.unselectedItemColor = ThemeColor.playerContrast02()
+            trimSilenceAmountControl.selectedBgColor = ThemeColor.playerContrast01()
+            trimSilenceAmountControl.selectedItemColor = PlayerColorHelper.playerBackgroundColor01()
+
+            playbackSettingsSegmentedControl.backgroundColor = ThemeColor.playerContrast06()
+            playbackSettingsSegmentedControl.selectedSegmentTintColor = ThemeColor.playerContrast01()
+
+            let normalAttribute = [NSAttributedString.Key.foregroundColor: ThemeColor.playerContrast02()]
+            playbackSettingsSegmentedControl.setTitleTextAttributes(normalAttribute, for: .normal)
+            let selectedAttribute = [NSAttributedString.Key.foregroundColor: PlayerColorHelper.playerBackgroundColor01()]
+            playbackSettingsSegmentedControl.setTitleTextAttributes(selectedAttribute, for: .selected)
+        } else {
+            trimSilenceAmountControl.lineColor = ThemeColor.playerContrast02()
+            trimSilenceAmountControl.unselectedItemColor = ThemeColor.playerContrast01()
+            trimSilenceAmountControl.selectedBgColor = ThemeColor.playerContrast01()
+            trimSilenceAmountControl.selectedItemColor = PlayerColorHelper.playerBackgroundColor01()
+        }
 
         updateSpeedBtn()
 
@@ -362,6 +490,10 @@ class EffectsViewController: SimpleNotificationsViewController {
         }
     }
 
+    private func currentPlaybackSettings() -> String {
+        playbackSettingsSegmentedControl.selectedSegmentIndex == 0 ? "global" : "local"
+    }
+
     @IBAction func closeTapped(_ sender: Any) {
         dismiss(animated: true, completion: nil)
     }
@@ -370,5 +502,56 @@ class EffectsViewController: SimpleNotificationsViewController {
 
     override var supportedInterfaceOrientations: UIInterfaceOrientationMask {
         .portrait
+    }
+
+    // MARK: - Accessibility
+
+    private func setupAccessibility() {
+        // Speed control buttons
+        minusBtn.accessibilityLabel = "Decrease Speed"//L10n.accessibilityPlayerEffectsDecreaseSpeed
+        plusBtn.accessibilityLabel = "Increase Speed"//L10n.accessibilityPlayerEffectsIncreaseSpeed
+
+        // Switches
+        trimSilenceSwitch.accessibilityLabel = L10n.trimSilence
+        volumeBoostSwitch.accessibilityLabel = L10n.volumeBoost
+
+        // Trim silence amount control accessibility is handled by the custom control itself
+        trimSilenceAmountControl.accessibilityLabel = L10n.trimSilence + " amount"
+        trimSilenceAmountControl.accessibilityHint = "Swipe up or down to change"
+
+        playbackSettingsSegmentedControl.accessibilityLabel = "Playback Effects Settings"
+
+        // Set accessibility hints
+        trimSilenceSwitch.accessibilityHint = L10n.playerEffectsTrimSilenceDetails
+        volumeBoostSwitch.accessibilityHint = L10n.volumeBoostDescription
+
+        // Configure view to allow VoiceOver navigation
+        view.accessibilityViewIsModal = true
+        setupAccessibilityOrder()
+    }
+
+    private func setupAccessibilityOrder(trimSilenceEnabled: Bool? = nil) {
+        let isTrimSilenceEnabled = trimSilenceEnabled ?? trimSilenceSwitch.isOn
+        // Create explicit accessibility navigation order
+        var accessibilityElements: [Any] = []
+
+        // Always include these elements in order
+        if !playbackSettingsSegmentedControl.isHidden {
+            accessibilityElements.append(playbackSettingsSegmentedControl!)
+        }
+
+        accessibilityElements.append(speedBtn!)
+        accessibilityElements.append(minusBtn!)
+        accessibilityElements.append(plusBtn!)
+        accessibilityElements.append(trimSilenceSwitch!)
+
+        // Only include trim silence amount control when it's enabled and visible
+        if isTrimSilenceEnabled && !trimSilenceAmountControl.isHidden {
+            accessibilityElements.append(trimSilenceAmountControl!)
+        }
+
+        accessibilityElements.append(volumeBoostSwitch!)
+
+        view.accessibilityElements = accessibilityElements
     }
 }

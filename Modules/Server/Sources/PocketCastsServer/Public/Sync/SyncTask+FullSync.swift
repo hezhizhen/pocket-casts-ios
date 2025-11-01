@@ -3,20 +3,33 @@ import PocketCastsDataModel
 import PocketCastsUtils
 
 extension SyncTask {
-    func processServerFilters(_ filters: [EpisodeFilter]) {
-        // before looking at the server filters, mark any we have here locally as needing to be syncing so they get pushed up with the next sync
-        DataManager.sharedManager.markAllEpisodeFiltersUnsynced()
+    func processServerPlaylists(_ playlists: [(EpisodeFilter, [Episode])]) {
+        // before looking at the server playlists, mark any we have here locally as needing to be syncing so they get pushed up with the next sync
+        DataManager.sharedManager.markAllPlaylistsUnsynced()
 
-        for filter in filters {
-            // if we have this filter locally, assume the server version is more up to date, so blow ours away
-            if let localFilter = DataManager.sharedManager.findFilter(uuid: filter.uuid) {
-                DataManager.sharedManager.delete(filter: localFilter)
+        playlists.forEach { (playlist, serverEpisodes) in
+            // if we have this playlist locally, assume the server version is more up to date, so blow ours away
+            if let localPlaylist = DataManager.sharedManager.findPlaylist(uuid: playlist.uuid) {
+                DataManager.sharedManager.delete(playlist: localPlaylist)
             }
 
             // save the server version of the filter, as long as it's not deleted
-            if !filter.wasDeleted {
-                filter.syncStatus = SyncStatus.synced.rawValue
-                DataManager.sharedManager.save(filter: filter)
+            guard !playlist.wasDeleted else {
+                return
+            }
+
+            var addedEpisodes: [Episode] = []
+
+            // Add missing episodes
+            let matchedEpisodeUuids = Set(DataManager.sharedManager.playlistEpisodes(for: playlist).map { $0.uuid })
+            addedEpisodes = serverEpisodes.filter { !matchedEpisodeUuids.contains($0.uuid) }
+
+            playlist.syncStatus = SyncStatus.synced.rawValue
+            DataManager.sharedManager.save(playlist: playlist)
+            let didAdd = DataManager.sharedManager.add(episodes: addedEpisodes, to: playlist)
+            if !didAdd {
+                let playlistCount = DataManager.sharedManager.playlistEpisodeCount(for: playlist, episodeUuidToAdd: nil, shouldShowArchived: true)
+                FileLog.shared.addMessage("SyncTask: Tried to add too many episodes from server playlist \(playlist.playlistName) episodeCount: \(addedEpisodes) playlistCount: \(playlistCount)")
             }
         }
     }
@@ -92,11 +105,14 @@ extension SyncTask {
                 localPodcast.addedDate = addedDate
             }
 
-            FileLog.shared.foldersIssue("SyncTask processPodcast: changing \(localPodcast.title ?? "") folder from \(localPodcast.folderUuid ?? "nil") to \(podcast.folderUuid ?? "nil")")
             localPodcast.folderUuid = podcast.folderUuid
 
             if let sortOrder = podcast.sortPosition {
                 localPodcast.sortOrder = sortOrder
+            }
+
+            if let settings = podcast.settings {
+                self.processSettings(settings, to: localPodcast)
             }
 
             // now grab the sync info for the episodes
@@ -164,5 +180,30 @@ private extension BookmarkDataManager {
         }
 
         return await permanentlyDelete(bookmarks: [bookmark])
+    }
+}
+
+// MARK: - Settings
+
+private extension SyncTask {
+    func processSettings(_ settings: PodcastSettings, to podcast: Podcast) {
+        let oldSettings = podcast.settings
+        podcast.settings.$customEffects = settings.$customEffects
+        podcast.settings.$autoStartFrom = settings.$autoStartFrom
+        podcast.settings.$autoSkipLast = settings.$autoSkipLast
+        podcast.settings.$trimSilence = settings.$trimSilence
+        podcast.settings.$playbackSpeed = settings.$playbackSpeed
+        podcast.settings.$boostVolume = settings.$boostVolume
+        podcast.settings.$notification = settings.$notification
+        podcast.settings.$autoArchive = settings.$autoArchive
+        podcast.settings.$autoArchivePlayed = settings.$autoArchivePlayed
+        podcast.settings.$autoArchiveInactive = settings.$autoArchiveInactive
+        podcast.settings.$autoArchiveEpisodeLimit = settings.$autoArchiveEpisodeLimit
+        podcast.settings.$addToUpNext = settings.$addToUpNext
+        podcast.settings.$addToUpNextPosition = settings.$addToUpNextPosition
+        podcast.settings.$episodesSortOrder = settings.$episodesSortOrder
+        podcast.settings.$episodeGrouping = settings.$episodeGrouping
+        podcast.settings.$showArchived = settings.$showArchived
+        oldSettings.printDiff(from: podcast.settings, withIdentifier: podcast.uuid)
     }
 }

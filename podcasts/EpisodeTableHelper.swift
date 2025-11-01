@@ -5,14 +5,12 @@ import PocketCastsDataModel
 struct EpisodeTableHelper {
     static func loadEpisodes(tintColor: UIColor = AppTheme.appTintColor(), query: String, arguments: [Any]?) -> [ListEpisode] {
         let loadedEpisodes = DataManager.sharedManager.findEpisodesWhere(customWhere: query, arguments: arguments)
+        return loadedEpisodes.toListEpisodes(tintColor: tintColor)
+    }
 
-        var newData = [ListEpisode]()
-        for episode in loadedEpisodes {
-            let isInUpNext = PlaybackManager.shared.inUpNext(episode: episode)
-            newData.append(ListEpisode(episode: episode, tintColor: tintColor, isInUpNext: isInUpNext))
-        }
-
-        return newData
+    static func loadPlaylistEpisodes(tintColor: UIColor = AppTheme.appTintColor(), query: String, arguments: [Any]? = nil) -> [ListEpisode] {
+        let loadedEpisodes = DataManager.sharedManager.findPlaylistEpisodesWhere(query: query, arguments: arguments)
+        return loadedEpisodes.toListEpisodes(tintColor: tintColor)
     }
 
     static func loadSectionedEpisodes(tintColor: UIColor = AppTheme.appTintColor(), query: String, arguments: [Any]?, episodeShortKey: (Episode) -> String) -> [ArraySection<String, ListEpisode>] {
@@ -63,10 +61,36 @@ struct EpisodeTableHelper {
 
         var newData = ArraySection<String, ListItem>(model: "episodes", elements: [])
         for section in sortedSections {
-            newData.elements.append(ListHeader(headerTitle: section.key, isSectionHeader: false))
+            newData.elements.append(ListHeader(headerTitle: section.key, isSectionHeader: false, sectionNumber: Int(section.value.first?.episode.seasonNumber ?? -1)))
             newData.elements.append(contentsOf: section.value)
         }
 
         return [newData]
+    }
+
+    static func searchSectionedEpisodes(for search: String, listenedTo: Bool, tintColor: UIColor = AppTheme.appTintColor(), episodeShortKey: (Episode) -> String) -> [ArraySection<String, ListEpisode>] {
+        let escapedSearch = search.escapeLike(escapeChar: "\\")
+        let loadedEpisodes = DataManager.sharedManager.findEpisodesAndPodcastsWhere(customWhere: escapedSearch, listenedTo: listenedTo)
+
+        var previousSectionName = ""
+        var currSectionIndex = -1
+        var newData = [ArraySection<String, ListEpisode>]()
+        for episode in loadedEpisodes {
+            let currSectionName = episodeShortKey(episode)
+
+            let isInUpNext = PlaybackManager.shared.inUpNext(episode: episode)
+            if previousSectionName == currSectionName {
+                var existingSection = newData[currSectionIndex]
+                let listEpisode = ListEpisode(episode: episode, tintColor: tintColor, isInUpNext: isInUpNext)
+                existingSection.elements.append(listEpisode)
+                newData[currSectionIndex] = existingSection
+            } else {
+                let listEpisode = ListEpisode(episode: episode, tintColor: tintColor, isInUpNext: isInUpNext)
+                newData.append(ArraySection(model: currSectionName, elements: [listEpisode]))
+                currSectionIndex += 1
+                previousSectionName = currSectionName
+            }
+        }
+        return newData
     }
 }

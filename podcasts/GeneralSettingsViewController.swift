@@ -1,23 +1,25 @@
 import PocketCastsDataModel
 import PocketCastsServer
+import PocketCastsUtils
 import UIKit
 
-class GeneralSettingsViewController: UIViewController, UITableViewDelegate, UITableViewDataSource {
+class GeneralSettingsViewController: PCViewController, UITableViewDelegate, UITableViewDataSource {
     private let timeStepperCellId = "TimeStepperCell"
     private let switchCellId = "SwitchCell"
     private let disclosureCellId = "DisclosureCell"
 
+    var scrollToRow: TableRow?
+
     let debounce = Debounce(delay: Constants.defaultDebounceTime)
 
-    private enum TableRow { case skipForward, skipBack, keepScreenAwake, openPlayer, intelligentPlaybackResumption, defaultRowAction, extraMediaActions, defaultAddToUpNextSwipe, defaultGrouping, defaultArchive, playUpNextOnTap, legacyBluetooth, multiSelectGesture, openLinksInBrowser, publishChapterTitles, autoplay }
-    private var tableData: [[TableRow]] = [[.defaultRowAction, .defaultGrouping, .defaultArchive, .defaultAddToUpNextSwipe, .openLinksInBrowser], [.skipForward, .skipBack, .keepScreenAwake, .openPlayer, .intelligentPlaybackResumption], [.playUpNextOnTap], [.extraMediaActions], [.legacyBluetooth], [.multiSelectGesture], [.publishChapterTitles], [.autoplay]]
+    enum TableRow { case skipForward, skipBack, keepScreenAwake, openPlayer, intelligentPlaybackResumption, defaultRowAction, extraMediaActions, defaultAddToUpNextSwipe, defaultGrouping, defaultArchive, playUpNextOnTap, legacyBluetooth, multiSelectGesture, openLinksInBrowser, publishChapterTitles, autoplay, autoRestartSleepTimer, shakeToRestartSleepTimer, isLockScreenScrubberDisabled }
+    private var tableData: [[TableRow]] = [[.defaultRowAction, .defaultGrouping, .defaultArchive, .defaultAddToUpNextSwipe, .openLinksInBrowser], [.skipForward, .skipBack, .keepScreenAwake, .openPlayer, .isLockScreenScrubberDisabled, .intelligentPlaybackResumption], [.autoRestartSleepTimer], [.shakeToRestartSleepTimer], [.playUpNextOnTap], [.extraMediaActions], [.legacyBluetooth], [.multiSelectGesture], [.publishChapterTitles], [.autoplay]]
 
     @IBOutlet var settingsTable: UITableView! {
         didSet {
             settingsTable.register(UINib(nibName: "TimeStepperCell", bundle: nil), forCellReuseIdentifier: timeStepperCellId)
             settingsTable.register(UINib(nibName: "SwitchCell", bundle: nil), forCellReuseIdentifier: switchCellId)
             settingsTable.register(UINib(nibName: "DisclosureCell", bundle: nil), forCellReuseIdentifier: disclosureCellId)
-            settingsTable.applyInsetForMiniPlayer()
         }
     }
 
@@ -26,7 +28,13 @@ class GeneralSettingsViewController: UIViewController, UITableViewDelegate, UITa
 
         title = L10n.settingsGeneral
 
+        insetAdjuster.setupInsetAdjustmentsForMiniPlayer(scrollView: settingsTable)
+
         Analytics.track(.settingsGeneralShown)
+
+        if let scrollToRow {
+            self.scrollToRow(scrollToRow)
+        }
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -38,6 +46,14 @@ class GeneralSettingsViewController: UIViewController, UITableViewDelegate, UITa
 
             // Finish the Autoplay option flow
             AnnouncementFlow.current = .none
+        }
+    }
+
+    private func scrollToRow(_ row: TableRow) {
+        for (sectionIndex, section) in tableData.enumerated() {
+            if let row = section.firstIndex(of: row) {
+                settingsTable.scrollToRow(at: IndexPath(row: row, section: sectionIndex), at: .middle, animated: true)
+            }
         }
     }
 
@@ -58,7 +74,7 @@ class GeneralSettingsViewController: UIViewController, UITableViewDelegate, UITa
             let cell = tableView.dequeueReusableCell(withIdentifier: timeStepperCellId, for: indexPath) as! TimeStepperCell
             let cellLabelText = L10n.skipForward
             cell.cellLabel.text = cellLabelText
-            let jumpFwdAmount = ServerSettings.skipForwardTime()
+            let jumpFwdAmount = Settings.skipForwardTime
             cell.cellSecondaryLabel.text = L10n.timeShorthand(jumpFwdAmount)
             cell.timeStepper.currentValue = TimeInterval(jumpFwdAmount)
             cell.timeStepper.tintColor = ThemeColor.primaryInteractive01()
@@ -70,7 +86,7 @@ class GeneralSettingsViewController: UIViewController, UITableViewDelegate, UITa
 
             cell.onValueChanged = { [weak self] value in
                 let newValue = Int(value)
-                ServerSettings.setSkipForwardTime(newValue)
+                Settings.skipForwardTime = newValue
                 cell.cellSecondaryLabel.text = L10n.timeShorthand(newValue)
                 cell.configureAccessibilityLabel(text: cellLabelText, time: newValue)
 
@@ -86,7 +102,7 @@ class GeneralSettingsViewController: UIViewController, UITableViewDelegate, UITa
             let cell = tableView.dequeueReusableCell(withIdentifier: timeStepperCellId, for: indexPath) as! TimeStepperCell
             let cellLabelText = L10n.skipBack
             cell.cellLabel.text = L10n.skipBack
-            let skipBackAmount = ServerSettings.skipBackTime()
+            let skipBackAmount = Settings.skipBackTime
             cell.cellSecondaryLabel.text = L10n.timeShorthand(skipBackAmount)
             cell.timeStepper.currentValue = TimeInterval(skipBackAmount)
             cell.timeStepper.tintColor = ThemeColor.primaryInteractive01()
@@ -98,7 +114,7 @@ class GeneralSettingsViewController: UIViewController, UITableViewDelegate, UITa
 
             cell.onValueChanged = { [weak self] value in
                 let newValue = Int(value)
-                ServerSettings.setSkipBackTime(newValue)
+                Settings.skipBackTime = newValue
                 cell.cellSecondaryLabel.text = L10n.timeShorthand(newValue)
                 cell.configureAccessibilityLabel(text: cellLabelText, time: newValue)
 
@@ -114,7 +130,12 @@ class GeneralSettingsViewController: UIViewController, UITableViewDelegate, UITa
             let cell = tableView.dequeueReusableCell(withIdentifier: switchCellId, for: indexPath) as! SwitchCell
 
             cell.cellLabel.text = L10n.settingsGeneralKeepScreenAwake
-            cell.cellSwitch.isOn = UserDefaults.standard.bool(forKey: Constants.UserDefaults.keepScreenOnWhilePlaying)
+
+            if FeatureFlag.newSettingsStorage.enabled {
+                cell.cellSwitch.isOn = SettingsStore.appSettings.keepScreenAwake
+            } else {
+                cell.cellSwitch.isOn = UserDefaults.standard.bool(forKey: Constants.UserDefaults.keepScreenOnWhilePlaying)
+            }
 
             cell.cellSwitch.removeTarget(self, action: nil, for: .valueChanged)
             cell.cellSwitch.addTarget(self, action: #selector(screenLockToggled(_:)), for: .valueChanged)
@@ -124,7 +145,8 @@ class GeneralSettingsViewController: UIViewController, UITableViewDelegate, UITa
             let cell = tableView.dequeueReusableCell(withIdentifier: switchCellId, for: indexPath) as! SwitchCell
 
             cell.cellLabel.text = L10n.settingsGeneralOpenInBrowser
-            cell.cellSwitch.isOn = UserDefaults.standard.bool(forKey: Constants.UserDefaults.openLinksInExternalBrowser)
+
+            cell.cellSwitch.isOn = Settings.openLinks
 
             cell.cellSwitch.removeTarget(self, action: nil, for: .valueChanged)
             cell.cellSwitch.addTarget(self, action: #selector(openLinksInBrowserToggled(_:)), for: .valueChanged)
@@ -134,7 +156,12 @@ class GeneralSettingsViewController: UIViewController, UITableViewDelegate, UITa
             let cell = tableView.dequeueReusableCell(withIdentifier: switchCellId, for: indexPath) as! SwitchCell
 
             cell.cellLabel.text = L10n.settingsGeneralAutoOpenPlayer
-            cell.cellSwitch.isOn = UserDefaults.standard.bool(forKey: Constants.UserDefaults.openPlayerAutomatically)
+
+            if FeatureFlag.newSettingsStorage.enabled {
+                cell.cellSwitch.isOn = SettingsStore.appSettings.openPlayer
+            } else {
+                cell.cellSwitch.isOn = UserDefaults.standard.bool(forKey: Constants.UserDefaults.openPlayerAutomatically)
+            }
 
             cell.cellSwitch.removeTarget(self, action: nil, for: .valueChanged)
             cell.cellSwitch.addTarget(self, action: #selector(openPlayerToggled(_:)), for: .valueChanged)
@@ -144,7 +171,12 @@ class GeneralSettingsViewController: UIViewController, UITableViewDelegate, UITa
             let cell = tableView.dequeueReusableCell(withIdentifier: switchCellId, for: indexPath) as! SwitchCell
 
             cell.cellLabel.text = L10n.settingsGeneralSmartPlayback
-            cell.cellSwitch.isOn = UserDefaults.standard.bool(forKey: Constants.UserDefaults.intelligentPlaybackResumption)
+
+            if FeatureFlag.newSettingsStorage.enabled {
+                cell.cellSwitch.isOn = SettingsStore.appSettings.intelligentResumption
+            } else {
+                cell.cellSwitch.isOn = UserDefaults.standard.bool(forKey: Constants.UserDefaults.intelligentPlaybackResumption)
+            }
 
             cell.cellSwitch.removeTarget(self, action: nil, for: .valueChanged)
             cell.cellSwitch.addTarget(self, action: #selector(intelligentPlaybackResumptionToggled(_:)), for: .valueChanged)
@@ -238,6 +270,36 @@ class GeneralSettingsViewController: UIViewController, UITableViewDelegate, UITa
 
             cell.cellSwitch.removeTarget(self, action: nil, for: .valueChanged)
             cell.cellSwitch.addTarget(self, action: #selector(autoplayToggled(_:)), for: .valueChanged)
+
+            return cell
+        case .autoRestartSleepTimer:
+            let cell = tableView.dequeueReusableCell(withIdentifier: switchCellId, for: indexPath) as! SwitchCell
+
+            cell.cellLabel.text = L10n.autoRestartSleepTimer
+            cell.cellSwitch.isOn = Settings.autoRestartSleepTimer
+
+            cell.cellSwitch.removeTarget(self, action: nil, for: .valueChanged)
+            cell.cellSwitch.addTarget(self, action: #selector(autoRestartSleepTimerToggled(_:)), for: .valueChanged)
+
+            return cell
+        case .shakeToRestartSleepTimer:
+            let cell = tableView.dequeueReusableCell(withIdentifier: switchCellId, for: indexPath) as! SwitchCell
+
+            cell.cellLabel.text = L10n.shakeToRestartSleepTimer
+            cell.cellSwitch.isOn = Settings.shakeToRestartSleepTimer
+
+            cell.cellSwitch.removeTarget(self, action: nil, for: .valueChanged)
+            cell.cellSwitch.addTarget(self, action: #selector(shakeToRestartSleepTimerToggled(_:)), for: .valueChanged)
+
+            return cell
+        case .isLockScreenScrubberDisabled:
+            let cell = tableView.dequeueReusableCell(withIdentifier: switchCellId, for: indexPath) as! SwitchCell
+
+            cell.cellLabel.text = L10n.settingsGeneralLockScreenDisabled
+            cell.cellSwitch.isOn = !Settings.isLockScreenScrubbingDisabled
+
+            cell.cellSwitch.removeTarget(self, action: nil, for: .valueChanged)
+            cell.cellSwitch.addTarget(self, action: #selector(disableLockScreenScrubberToggled(_:)), for: .valueChanged)
 
             return cell
         }
@@ -354,6 +416,8 @@ class GeneralSettingsViewController: UIViewController, UITableViewDelegate, UITa
             return SettingsTableHeader(frame: headerFrame, title: L10n.settingsGeneralDefaultsHeader)
         } else if section == 1 {
             return SettingsTableHeader(frame: headerFrame, title: L10n.settingsGeneralPlayerHeader)
+        } else if tableData[safe: section]?.contains(.autoRestartSleepTimer) == true {
+            return SettingsTableHeader(frame: headerFrame, title: L10n.sleepTimer)
         }
 
         return nil
@@ -381,6 +445,10 @@ class GeneralSettingsViewController: UIViewController, UITableViewDelegate, UITa
             return L10n.settingsGeneralPublishChapterTitlesSubtitle
         case .autoplay:
             return L10n.settingsGeneralAutoplaySubtitle
+        case .autoRestartSleepTimer:
+            return L10n.autoRestartSleepTimerDescription
+        case .shakeToRestartSleepTimer:
+            return L10n.shakeToRestartSleepTimerDescription
         default:
             return nil
         }
@@ -394,9 +462,11 @@ class GeneralSettingsViewController: UIViewController, UITableViewDelegate, UITa
         let groupingPrompt = OptionsPicker(title: nil)
 
         let applyToAllAction = OptionAction(label: L10n.settingsGeneralApplyAllConf, icon: nil) {
+            Analytics.track(.settingsGeneralEpisodeGroupingApplyToExisting)
             DataManager.sharedManager.updateAllPodcastGrouping(to: grouping)
         }
         let noAction = OptionAction(label: L10n.settingsGeneralNoThanks, icon: nil) {
+            Analytics.track(.settingsGeneralEpisodeGroupingDoNotApplyToExisting)
             // no need to do anything
         }
         noAction.outline = true
@@ -411,9 +481,11 @@ class GeneralSettingsViewController: UIViewController, UITableViewDelegate, UITa
         let groupingPrompt = OptionsPicker(title: nil)
 
         let applyToAllAction = OptionAction(label: L10n.settingsGeneralApplyAllConf, icon: nil) {
+            Analytics.track(.settingsGeneralArchivedEpisodesApplyToExisting)
             DataManager.sharedManager.updateAllShowArchived(to: showArchived)
         }
         let noAction = OptionAction(label: L10n.settingsGeneralNoThanks, icon: nil) {
+            Analytics.track(.settingsGeneralArchivedEpisodesDoNotApplyToExisting)
             // no need to do anything
         }
         noAction.outline = true
@@ -425,13 +497,16 @@ class GeneralSettingsViewController: UIViewController, UITableViewDelegate, UITa
     }
 
     @objc private func screenLockToggled(_ sender: UISwitch) {
+        if FeatureFlag.newSettingsStorage.enabled {
+            SettingsStore.appSettings.keepScreenAwake = sender.isOn
+        }
         UserDefaults.standard.set(sender.isOn, forKey: Constants.UserDefaults.keepScreenOnWhilePlaying)
         PlaybackManager.shared.updateIdleTimer()
         Settings.trackValueToggled(.settingsGeneralKeepScreenAwakeToggled, enabled: sender.isOn)
     }
 
     @objc private func openLinksInBrowserToggled(_ sender: UISwitch) {
-        UserDefaults.standard.set(sender.isOn, forKey: Constants.UserDefaults.openLinksInExternalBrowser)
+        Settings.openLinks = sender.isOn
         Settings.trackValueToggled(.settingsGeneralOpenLinksInBrowserToggled, enabled: sender.isOn)
     }
 
@@ -448,11 +523,17 @@ class GeneralSettingsViewController: UIViewController, UITableViewDelegate, UITa
     }
 
     @objc private func openPlayerToggled(_ sender: UISwitch) {
+        if FeatureFlag.newSettingsStorage.enabled {
+            SettingsStore.appSettings.openPlayer = sender.isOn
+        }
         UserDefaults.standard.set(sender.isOn, forKey: Constants.UserDefaults.openPlayerAutomatically)
         Settings.trackValueToggled(.settingsGeneralOpenPlayerAutomaticallyToggled, enabled: sender.isOn)
     }
 
     @objc private func intelligentPlaybackResumptionToggled(_ sender: UISwitch) {
+        if FeatureFlag.newSettingsStorage.enabled {
+            SettingsStore.appSettings.intelligentResumption = sender.isOn
+        }
         UserDefaults.standard.set(sender.isOn, forKey: Constants.UserDefaults.intelligentPlaybackResumption)
         Settings.trackValueToggled(.settingsGeneralIntelligentPlaybackToggled, enabled: sender.isOn)
     }
@@ -473,8 +554,25 @@ class GeneralSettingsViewController: UIViewController, UITableViewDelegate, UITa
     @objc private func autoplayToggled(_ sender: UISwitch) {
         Settings.autoplay = sender.isOn
 
-
         Settings.trackValueToggled(.settingsGeneralAutoplayToggled, enabled: sender.isOn)
+    }
+
+    @objc private func autoRestartSleepTimerToggled(_ sender: UISwitch) {
+        Settings.autoRestartSleepTimer = sender.isOn
+
+        Settings.trackValueToggled(.settingsGeneralAutoSleepTimerRestartToggled, enabled: sender.isOn)
+    }
+
+    @objc private func shakeToRestartSleepTimerToggled(_ sender: UISwitch) {
+        Settings.shakeToRestartSleepTimer = sender.isOn
+
+        Settings.trackValueToggled(.settingsGeneralShakeToResetSleepTimerToggled, enabled: sender.isOn)
+    }
+
+    @objc private func disableLockScreenScrubberToggled(_ sender: UISwitch) {
+        Settings.isLockScreenScrubbingDisabled = !sender.isOn
+
+        Settings.trackValueToggled(.settingsGeneralDisableLockScreenScrubberToggled, enabled: !sender.isOn)
     }
 
     override var preferredStatusBarStyle: UIStatusBarStyle {

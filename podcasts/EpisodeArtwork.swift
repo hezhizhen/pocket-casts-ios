@@ -1,6 +1,8 @@
 import Foundation
 import Kingfisher
 import PocketCastsServer
+import PocketCastsUtils
+import AVFoundation
 
 /// Extracts artwork from a streaming episode (if there's any)
 class EpisodeArtwork {
@@ -24,7 +26,7 @@ class EpisodeArtwork {
         }
 
         if let assetEpisodeArtwork = loadEpisodeArtwork(from: asset) {
-            save(assetEpisodeArtwork, for: episodeUuid)
+            imageManager.save(assetEpisodeArtwork, for: episodeUuid)
             return
         }
 
@@ -45,12 +47,13 @@ class EpisodeArtwork {
     }
 
     private func loadEpisodeArtworkFromUrl(podcastUuid: String, episodeUuid: String) {
-        CacheServerHandler.shared.loadEpisodeArtworkUrl(podcastUuid: podcastUuid, episodeUuid: episodeUuid) { [weak self] imageUrl in
+        Task { [weak self] in
             guard let self else {
                 return
             }
 
-            guard let imageUrl, let url = URL(string: imageUrl) else {
+            guard let imageUrl = try? await ShowInfoCoordinator.shared.loadEpisodeArtworkUrl(podcastUuid: podcastUuid, episodeUuid: episodeUuid),
+                  let url = URL(string: imageUrl) else {
                 return
             }
 
@@ -60,17 +63,10 @@ class EpisodeArtwork {
             let size = self.imageManager.biggestPodcastImageSize
             let resizeProcessor = DownsamplingImageProcessor(size: .init(width: size, height: size))
             KingfisherManager.shared.retrieveImage(with: url, options: [.processor(resizeProcessor)]) { result in
-
                 if let image = try? result.get().image {
-                    self.save(image, for: episodeUuid)
+                    self.imageManager.save(image, for: episodeUuid)
                 }
             }
-        }
-    }
-
-    private func save(_ image: UIImage, for episodeUuid: String) {
-        imageManager.subscribedPodcastsCache.store(image, forKey: episodeUuid) { _ in
-            NotificationCenter.postOnMainThread(notification: .episodeEmbeddedArtworkLoaded)
         }
     }
 }

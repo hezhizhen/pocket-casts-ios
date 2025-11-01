@@ -8,67 +8,17 @@ public class CacheServerHandler {
 
     public static let noShowNotesMessage = "Unable to find show notes for this episode."
 
-    private let showNotesUrlCache: URLCache
     private let colorsUrlsCache: URLCache
 
-    private lazy var episodeInfoHandler = EpisodeInfoHandler()
+    private lazy var episodeInfoHandler = ShowInfoDataRetriever()
 
-    public static var newShowNotesEndpoint: Bool = false
-
-    public static var episodeFeedArtwork: Bool = false
+    private let tokenHelper = TokenHelper.shared
 
     public init() {
-        showNotesUrlCache = URLCache(memoryCapacity: 1.megabytes, diskCapacity: 10.megabytes, diskPath: "show_notes")
         colorsUrlsCache = URLCache(memoryCapacity: 400.kilobytes, diskCapacity: 5.megabytes, diskPath: "colors")
     }
 
-    // MARK: - Show Notes
-
-    public func loadShowNotes(podcastUuid: String, episodeUuid: String, cached: ((String) -> Void)? = nil, completion: ((String?) -> Void)?) {
-        guard !Self.newShowNotesEndpoint else {
-            episodeInfoHandler.loadShowNotes(podcastUuid: podcastUuid, episodeUuid: episodeUuid, cached: cached, completion: completion)
-            return
-        }
-
-        let url = ServerHelper.asUrl(ServerConstants.Urls.cache() + "mobile/episode/show_notes/\(episodeUuid)")
-        let request = URLRequest(url: url)
-
-        var cachedNotes = ""
-        var didSendCachedNotes = false
-        if let cachedResponse = showNotesUrlCache.cachedResponse(for: request), let showNotes = topLevelValue(data: cachedResponse.data, name: "show_notes", ofType: String.self) {
-            cachedNotes = showNotes
-            cached?(showNotes)
-            didSendCachedNotes = true
-        }
-
-        TokenHelper.callSecureUrl(request: request) { [weak self] response, data, _ in
-            guard let strongSelf = self else { return }
-
-            if let data = data, let response = response, let showNotes = strongSelf.topLevelValue(data: data, name: "show_notes", ofType: String.self) {
-                let responseToCache = CachedURLResponse(response: response, data: data)
-                strongSelf.showNotesUrlCache.storeCachedResponse(responseToCache, for: request)
-
-                if didSendCachedNotes, showNotes == cachedNotes {
-                    return
-                }
-                completion?(showNotes)
-            } else if !didSendCachedNotes {
-                // if loading failed and we haven't sent the client anything, send it a message it can show the user instead
-                completion?(CacheServerHandler.noShowNotesMessage)
-            }
-        }
-    }
-
     // MARK: - Episode Artwork
-
-    public func loadEpisodeArtworkUrl(podcastUuid: String, episodeUuid: String, completion: ((String?) -> Void)?) {
-        guard Self.newShowNotesEndpoint, Self.episodeFeedArtwork else {
-            completion?(nil)
-            return
-        }
-
-        episodeInfoHandler.loadEpisodeArtworkUrl(podcastUuid: podcastUuid, episodeUuid: episodeUuid, completion: completion)
-    }
 
     public func loadPodcastColors(podcastUuid: String, allowCachedVersion: Bool, completion: @escaping ((String?, String?, String?) -> Void)) {
         let url = ServerHelper.colorUrl(podcastUuid: podcastUuid)
@@ -116,9 +66,10 @@ public class CacheServerHandler {
 
     public func loadPodcastInfo(podcastUuid: String, completion: @escaping (([String: Any]?, String?) -> Void)) {
         let url = urlForPodcast(uuid: podcastUuid)
-        let request = URLRequest(url: url, cachePolicy: .useProtocolCachePolicy, timeoutInterval: CacheServerHandler.defaultTimeout)
+        var request = URLRequest(url: url, cachePolicy: .useProtocolCachePolicy, timeoutInterval: CacheServerHandler.defaultTimeout)
+        request.addLocalizationHeaders()
 
-        TokenHelper.callSecureUrl(request: request) { [weak self] response, data, _ in
+        tokenHelper.callSecureUrl(request: request) { [weak self] response, data, _ in
             guard let strongSelf = self else { return }
 
             if response?.statusCode == ServerConstants.HttpConstants.ok, let data = data, let podcastInfo = strongSelf.asJson(data: data) {
@@ -137,9 +88,10 @@ public class CacheServerHandler {
 
     public func loadEpisodeUrl(episodeUuid: String, podcastUuid: String, completion: @escaping ((String?) -> Void)) {
         let url = ServerHelper.asUrl(ServerConstants.Urls.cache() + "mobile/episode/url/\(podcastUuid)/\(episodeUuid)")
-        let request = URLRequest(url: url, cachePolicy: .useProtocolCachePolicy, timeoutInterval: CacheServerHandler.defaultTimeout)
+        var request = URLRequest(url: url, cachePolicy: .useProtocolCachePolicy, timeoutInterval: CacheServerHandler.defaultTimeout)
+        request.addLocalizationHeaders()
 
-        TokenHelper.callSecureUrl(request: request) { response, data, _ in
+        tokenHelper.callSecureUrl(request: request) { response, data, _ in
             if response?.statusCode == ServerConstants.HttpConstants.ok, let data = data, let url = String(data: data, encoding: .utf8) {
                 completion(url)
 
@@ -156,8 +108,9 @@ public class CacheServerHandler {
         if let lastUpdated = podcast.lastUpdatedAt, podcast.isSubscribed() {
             request.setValue(lastUpdated, forHTTPHeaderField: ServerConstants.HttpHeaders.ifModifiedSince)
         }
+        request.addLocalizationHeaders()
 
-        TokenHelper.callSecureUrl(request: request) { [weak self] response, data, _ in
+        tokenHelper.callSecureUrl(request: request) { [weak self] response, data, _ in
             // podcast hasn't changed
             if response?.statusCode == ServerConstants.HttpConstants.notModified {
                 completion(nil, nil)
@@ -206,7 +159,7 @@ public class CacheServerHandler {
             return
         }
 
-        TokenHelper.callSecureUrl(request: request) { response, data, _ in
+        tokenHelper.callSecureUrl(request: request) { response, data, _ in
             guard response?.statusCode == ServerConstants.HttpConstants.ok, let data = data else {
                 completion?(nil)
                 return

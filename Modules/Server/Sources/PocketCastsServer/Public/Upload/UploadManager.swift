@@ -84,7 +84,7 @@ public class UploadManager: NSObject {
 
     private func performAddToQueue(episode: UserEpisode, previousUploadFailed: Bool, fireNotification: Bool) {
         let mobileDataAllowed = !ServerSettings.userEpisodeOnlyOnWifi()
-        let useCellularSession = mobileDataAllowed && !NetworkUtils.shared.isConnectedToWifi()
+        let useCellularSession = mobileDataAllowed && !NetworkUtils.shared.isConnectedToUnexpensiveConnection()
         let sessionToUse = useCellularSession ? cellularBackgroundSession : wifiOnlyBackgroundSession
 
         resumeUpload(episode: episode, session: sessionToUse, previousUploadFailed: previousUploadFailed, taskId: episode.uploadTaskId)
@@ -202,6 +202,7 @@ public class UploadManager: NSObject {
 
             request.addValue(episode.fileType ?? "audio/mp3", forHTTPHeaderField: ServerConstants.HttpHeaders.contentType)
             request.addValue("application/json", forHTTPHeaderField: ServerConstants.HttpHeaders.accept)
+            request.addLocalizationHeaders()
             request.timeoutInterval = 30.seconds
 
             let uploadTask = session.uploadTask(with: request, fromFile: URL(fileURLWithPath: episode.pathToDownloadedFile(pathFinder: fileProtocol())))
@@ -236,6 +237,7 @@ public class UploadManager: NSObject {
 
             request.addValue("application/json", forHTTPHeaderField: ServerConstants.HttpHeaders.contentType)
             request.addValue("application/json", forHTTPHeaderField: ServerConstants.HttpHeaders.accept)
+            request.addLocalizationHeaders()
             request.timeoutInterval = 30.seconds
 
             let fileString = UploadManager.shared.customImageDirectory + "/" + episode.uuid + ".jpg"

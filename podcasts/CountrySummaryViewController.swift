@@ -42,10 +42,13 @@ class CountrySummaryViewController: UIViewController, DiscoverSummaryProtocol {
         self.delegate = delegate
     }
 
-    func populateFrom(item: DiscoverItem) {}
+    func populateFrom(item: DiscoverItem, region: String?, category: DiscoverCategory?) {}
 
     @objc private func changeCountryTapped() {
         let countryChooser = CountryChooserViewController()
+        countryChooser.changed = { [weak self] region in
+            self?.updateRegion(region)
+        }
         let regions = Array(serverRegions().values.map { $0 })
         countryChooser.regions = regions.sorted(by: { region1, region2 -> Bool in
             region1.name.localized.compare(region2.name.localized) == .orderedAscending

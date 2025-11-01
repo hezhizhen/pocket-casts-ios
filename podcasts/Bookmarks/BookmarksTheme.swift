@@ -5,10 +5,10 @@ protocol BookmarksStyle: ObservableObject {
     associatedtype ActionStyle: ActionBarStyle
     associatedtype EmptyStyle: EmptyStateViewStyle
 
-    var background: Color { get }
     var primaryText: Color { get }
     var secondaryText: Color { get }
     var tertiaryText: Color { get }
+    var titleText: Color { get }
     var divider: Color { get }
     var rowHighlight: Color { get }
     var rowSelected: Color { get }
@@ -45,6 +45,7 @@ class BookmarksPlayerTabStyle: ThemeObserver, BookmarksStyle {
     var primaryText: Color { theme.playerContrast01 }
     var secondaryText: Color { theme.playerContrast02 }
     var tertiaryText: Color { theme.playerContrast02 }
+    var titleText: Color { theme.playerContrast01 }
     var divider: Color { theme.playerContrast05 }
     var rowHighlight: Color { theme.playerContrast05 }
     var rowSelected: Color { rowHighlight }
@@ -65,6 +66,7 @@ class ThemedBookmarksStyle: ThemeObserver, BookmarksStyle {
     var primaryText: Color { theme.primaryText01 }
     var secondaryText: Color { theme.primaryText02 }
     var tertiaryText: Color { theme.primaryText02 }
+    var titleText: Color { theme.secondaryText01 }
     var divider: Color { theme.primaryUi05 }
     var rowHighlight: Color { theme.primaryUi02Active }
     var rowSelected: Color { theme.primaryUi02Selected }
@@ -91,6 +93,7 @@ class OverrideThemedBookmarksStyle: ThemedBookmarksStyle {
     override var primaryText: Color { Color(ThemeColor.primaryText01(for: overrideTheme)) }
     override var secondaryText: Color { Color(ThemeColor.primaryText02(for: overrideTheme)) }
     override var tertiaryText: Color { Color(ThemeColor.primaryText02(for: overrideTheme)) }
+    override var titleText: Color { Color(ThemeColor.secondaryText01(for: overrideTheme)) }
     override var divider: Color { Color(ThemeColor.primaryUi05(for: overrideTheme)) }
     override var rowHighlight: Color { Color(ThemeColor.primaryUi02Active(for: overrideTheme)) }
     override var rowSelected: Color { Color(ThemeColor.primaryUi02Selected(for: overrideTheme)) }
@@ -116,7 +119,6 @@ class OverrideEmptyStateStyle: DefaultEmptyStateStyle {
         self.overrideTheme = overrideTheme
     }
 
-    override var background: Color { Color(ThemeColor.primaryUi01Active(for: overrideTheme)) }
     override var title: Color { Color(ThemeColor.primaryText01(for: overrideTheme)) }
     override var message: Color { Color(ThemeColor.primaryText02(for: overrideTheme)) }
     override var button: Color { Color(ThemeColor.primaryInteractive01(for: overrideTheme)) }

@@ -19,7 +19,7 @@ class ImageManager {
         let url = URL(fileURLWithPath: path)
         subscribedPodcastsCache = try! ImageCache(name: "subscribedPodcastsCache", cacheDirectoryURL: url)
         subscribedPodcastsCache.diskStorage.config.sizeLimit = UInt(400.megabytes)
-        subscribedPodcastsCache.diskStorage.config.expiration = .days(365) // cache artwork for a full year, so that users don't have their artwork dissapear
+        subscribedPodcastsCache.diskStorage.config.expiration = .days(365) // cache artwork for a full year, so that users don't have their artwork disappeared
         return subscribedPodcastsCache
     }()
 
@@ -28,6 +28,9 @@ class ImageManager {
 
     // Discover Cache
     private var discoverCache = ImageCache(name: "discoverCache")
+
+    // Track in-progress artwork loads by UUID
+    private var inProgressArtworkLoads = Set<String>()
 
     public var biggestPodcastImageSize: Int {
         availablePodcastImageSizes.max()!
@@ -177,7 +180,7 @@ class ImageManager {
 
         do {
             let data = try Data(contentsOf: cache.diskStorage.cacheFileURL(forKey: key))
-            let image = try UIImage(imageData: data)
+            let image = UIImage(data: data)
 
             return image
         } catch {
@@ -210,6 +213,12 @@ class ImageManager {
         KingfisherManager.shared.retrieveImage(with: imageURL, options: [.targetCache(imageCache)]) { result in
             let image = try? result.get().image
             completionHandler(image)
+        }
+    }
+
+    func save(_ image: UIImage, for episodeUuid: String) {
+        subscribedPodcastsCache.store(image, forKey: episodeUuid) { _ in
+            NotificationCenter.postOnMainThread(notification: .episodeEmbeddedArtworkLoaded)
         }
     }
 
@@ -328,7 +337,7 @@ class ImageManager {
             }
         }
 
-        if !NetworkUtils.shared.isConnectedToWifi() { return } // we don't auto update podcast images over the cell network
+        if !NetworkUtils.shared.isConnectedToUnexpensiveConnection() { return } // we don't auto update podcast images over the cell network
 
         UserDefaults.standard.set(Date(), forKey: Constants.UserDefaults.lastImageRefreshTime)
 
@@ -434,7 +443,7 @@ class ImageManager {
         removeAllFiles(folder: path)
 
         // if on WiFi, recache the images to make it a more seamless transition, if not, they'll just get cached as people use the app
-        if NetworkUtils.shared.isConnectedToWifi() {
+        if NetworkUtils.shared.isConnectedToUnexpensiveConnection() {
             cacheAllPodcastImages()
         }
     }
@@ -469,7 +478,7 @@ class ImageManager {
         case .list:
             let name = Theme.isDarkTheme() ? "noartwork-list-dark" : "noartwork-list"
             return UIImage(named: name)
-        case .page:
+        case .page, .detail:
             let name = Theme.isDarkTheme() ? "noartwork-page-dark" : "noartwork-page"
             return UIImage(named: name)
         }
@@ -509,7 +518,7 @@ class ImageManager {
             let shortestSide = screenHeight > screenWidth ? screenWidth : screenHeight
 
             return Int(round(shortestSide * UIScreen.main.scale / 3.0))
-        case .page:
+        case .page, .detail:
             return Int(320.0 * UIScreen.main.scale)
         }
     }

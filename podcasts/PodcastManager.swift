@@ -6,7 +6,7 @@ import PocketCastsUtils
 class PodcastManager: NSObject {
     private static let maxAutoDownloadSeperationTime = 12.hours
 
-    @objc static let shared = PodcastManager()
+    @objc static let shared = PodcastManager(dataManager: DataManager.sharedManager, downloadManager: DownloadManager.shared)
 
     lazy var isoFormatter: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
@@ -27,44 +27,59 @@ class PodcastManager: NSObject {
         return queue
     }()
 
+    let dataManager: DataManager
+    let downloadManager: DownloadManager
+
+    init(dataManager: DataManager, downloadManager: DownloadManager) {
+        self.dataManager = dataManager
+        self.downloadManager = downloadManager
+    }
+
     // MARK: - Notifications
 
-    #if !os(watchOS)
+    #if !os(watchOS) && !APPCLIP
         func setNotificationsEnabled(podcast: Podcast, enabled: Bool) {
             if enabled {
-                if !NotificationsHelper.shared.pushEnabled() {
+                if !NotificationsGroup.newEpisodes.isEnabled {
                     // this is the first podcast to enable push, to work around the fact that we defaulted that to on at the data layer, turn it off for every podcast
                     // this means it just ends up being on for this one podcast, not all of them
-                    let podcasts = DataManager.sharedManager.allPodcasts(includeUnsubscribed: false)
+                    let podcasts = dataManager.allPodcasts(includeUnsubscribed: false)
                     var foundPushOff = false
                     for podcast in podcasts {
-                        if !podcast.pushEnabled {
+                        if !podcast.isPushEnabled {
                             foundPushOff = true
                             break
                         }
                     }
 
                     if !foundPushOff {
-                        DataManager.sharedManager.setPushForAllPodcasts(pushEnabled: false)
+                        dataManager.setPushForAllPodcasts(pushEnabled: false)
                     }
-
-                    NotificationsHelper.shared.enablePush()
+                    NotificationsCoordinator.shared.setupNotifications(for: .newEpisodes)
                 }
             }
 
-            DataManager.sharedManager.savePushSetting(podcast: podcast, pushEnabled: enabled)
+            if FeatureFlag.newSettingsStorage.enabled {
+                podcast.settings.notification = enabled
+                podcast.syncStatus = SyncStatus.notSynced.rawValue
+                dataManager.save(podcast: podcast)
+            } else {
+                dataManager.savePushSetting(podcast: podcast, pushEnabled: enabled)
+            }
         }
     #endif
 
     func allPodcastsSorted(in sortOrder: LibrarySort, reloadFromDatabase: Bool = false) -> [Podcast] {
         if sortOrder == .titleAtoZ {
-            return DataManager.sharedManager.allPodcastsOrderedByTitle(reloadFromDatabase: reloadFromDatabase)
+            return dataManager.allPodcastsOrderedByTitle(reloadFromDatabase: reloadFromDatabase)
         } else if sortOrder == .episodeDateNewestToOldest {
-            return DataManager.sharedManager.allPodcastsOrderedByNewestEpisodes(reloadFromDatabase: reloadFromDatabase)
+            return dataManager.allPodcastsOrderedByNewestEpisodes(reloadFromDatabase: reloadFromDatabase)
         } else if sortOrder == .dateAddedNewestToOldest {
-            return DataManager.sharedManager.allPodcastsOrderedByAddedDate(reloadFromDatabase: reloadFromDatabase)
+            return dataManager.allPodcastsOrderedByAddedDate(reloadFromDatabase: reloadFromDatabase)
+        } else if sortOrder == .recentlyPlayed {
+            return dataManager.allPodcastsOrderedByLastPlayedEpisodes(reloadFromDatabase: reloadFromDatabase)
         } else {
-            return DataManager.sharedManager.allPodcasts(includeUnsubscribed: false, reloadFromDatabase: reloadFromDatabase)
+            return dataManager.allPodcasts(includeUnsubscribed: false, reloadFromDatabase: reloadFromDatabase)
         }
     }
 
@@ -84,24 +99,24 @@ class PodcastManager: NSObject {
 
     func checkForPendingAndAutoDownloads() {
         // check if any existing episode that have been queued need to be downloading
-        if NetworkUtils.shared.isConnectedToWifi() {
-            let queuedEpisodes = DataManager.sharedManager.findEpisodesWhere(customWhere: "episodeStatus == ?", arguments: [DownloadStatus.waitingForWifi.rawValue])
+        if NetworkUtils.shared.isConnectedToUnexpensiveConnection() {
+            let queuedEpisodes = dataManager.findEpisodesWhere(customWhere: "episodeStatus == ?", arguments: [DownloadStatus.waitingForWifi.rawValue])
             for episode in queuedEpisodes {
-                DownloadManager.shared.addToQueue(episodeUuid: episode.uuid, fireNotification: false, autoDownloadStatus: AutoDownloadStatus(rawValue: episode.autoDownloadStatus) ?? .notSpecified)
+                downloadManager.addToQueue(episodeUuid: episode.uuid, fireNotification: false, autoDownloadStatus: AutoDownloadStatus(rawValue: episode.autoDownloadStatus) ?? .notSpecified)
             }
         }
 
         // check if any existing episodes were downloading, but aren't currently (caused by app force quit while episode was downloading)
-        let stuckDownloadingEpisodes = DataManager.sharedManager.findEpisodesWhere(customWhere: "episodeStatus == ?", arguments: [DownloadStatus.downloading.rawValue])
+        let stuckDownloadingEpisodes = dataManager.findEpisodesWhere(customWhere: "episodeStatus == ?", arguments: [DownloadStatus.downloading.rawValue])
         for episode in stuckDownloadingEpisodes {
-            if !DownloadManager.shared.isEpisodeDownloading(episode) {
-                if Settings.autoDownloadMobileDataAllowed() || NetworkUtils.shared.isConnectedToWifi() {
-                    DownloadManager.shared.addToQueue(episodeUuid: episode.uuid, fireNotification: false, autoDownloadStatus: AutoDownloadStatus(rawValue: episode.autoDownloadStatus) ?? .notSpecified)
+            if !downloadManager.isEpisodeDownloading(episode) {
+                if Settings.autoDownloadMobileDataAllowed() || NetworkUtils.shared.isConnectedToUnexpensiveConnection() {
+                    downloadManager.addToQueue(episodeUuid: episode.uuid, fireNotification: false, autoDownloadStatus: AutoDownloadStatus(rawValue: episode.autoDownloadStatus) ?? .notSpecified)
                 }
                 else {
                     // If we're not downloading over cellular, clear task id so its not removed by the "stuck download" cleaner, and queue it for later
-                    DataManager.sharedManager.clearDownloadTaskId(episode: episode)
-                    DownloadManager.shared.queueForLaterDownload(episodeUuid: episode.uuid, fireNotification: false, autoDownloadStatus: AutoDownloadStatus(rawValue: episode.autoDownloadStatus) ?? .notSpecified)
+                    dataManager.clearDownloadTaskId(episode: episode)
+                    downloadManager.queueForLaterDownload(episodeUuid: episode.uuid, fireNotification: false, autoDownloadStatus: AutoDownloadStatus(rawValue: episode.autoDownloadStatus) ?? .notSpecified)
                 }
             }
         }
@@ -116,14 +131,14 @@ class PodcastManager: NSObject {
         // then check if there's any new auto download ones we should be adding to that queue
         if !Settings.autoDownloadEnabled() { return }
 
-        let podcasts = DataManager.sharedManager.allPodcasts(includeUnsubscribed: false)
+        let podcasts = dataManager.allPodcasts(includeUnsubscribed: false)
         for podcast in podcasts {
             checkForEpisodesToDownload(podcast: podcast)
         }
     }
 
     func applyAutoArchivingToAllPodcasts() {
-        let podcasts = DataManager.sharedManager.allPodcasts(includeUnsubscribed: false)
+        let podcasts = dataManager.allPodcasts(includeUnsubscribed: false)
         for podcast in podcasts {
             ArchiveHelper.applyAutoArchivingToPodcast(podcast)
         }
@@ -131,11 +146,11 @@ class PodcastManager: NSObject {
 
     private func checkForEpisodesToDownload(podcast: Podcast) {
         if !podcast.autoDownloadOn() { return }
+        let episodesLimit = FeatureFlag.autoDownloadOnSubscribe.enabled ? Settings.autoDownloadLimits().rawValue : 4
+        let latestEpisodes = dataManager.findEpisodesWhere(customWhere: "podcast_id == ? ORDER BY publishedDate DESC, addedDate DESC LIMIT ?", arguments: [podcast.id, episodesLimit])
+        guard let latestEpisode = latestEpisodes.first else { return } // no episodes to download
 
-        let topFourEpisodes = DataManager.sharedManager.findEpisodesWhere(customWhere: "podcast_id == ? ORDER BY publishedDate DESC, addedDate DESC LIMIT 4", arguments: [podcast.id])
-        guard let latestEpisode = topFourEpisodes.first else { return } // no episodes to download
-
-        for episode in topFourEpisodes {
+        for episode in latestEpisodes {
             if episode.played() || episode.archived { return } // as soon as we hit a played or archived episode don't look any further
 
             // as soon as we hit an episode that's too old to download don't look any further
@@ -145,12 +160,12 @@ class PodcastManager: NSObject {
                 }
             }
 
-            if episode.exemptFromAutoDownload() || episode.downloaded(pathFinder: DownloadManager.shared) || episode.queued() || episode.downloading() { continue }
+            if episode.exemptFromAutoDownload() || episode.downloaded(pathFinder: downloadManager) || episode.queued() || episode.downloading() { continue }
 
-            if Settings.autoDownloadMobileDataAllowed() || NetworkUtils.shared.isConnectedToWifi() {
-                DownloadManager.shared.addToQueue(episodeUuid: episode.uuid, fireNotification: false, autoDownloadStatus: .autoDownloaded)
+            if Settings.autoDownloadMobileDataAllowed() || NetworkUtils.shared.isConnectedToUnexpensiveConnection() {
+                downloadManager.addToQueue(episodeUuid: episode.uuid, fireNotification: false, autoDownloadStatus: .autoDownloaded)
             } else {
-                DownloadManager.shared.queueForLaterDownload(episodeUuid: episode.uuid, fireNotification: false, autoDownloadStatus: .autoDownloaded)
+                downloadManager.queueForLaterDownload(episodeUuid: episode.uuid, fireNotification: false, autoDownloadStatus: .autoDownloaded)
             }
         }
     }
@@ -164,7 +179,9 @@ class PodcastManager: NSObject {
             let importer = SharedItemImporter(strippedUrl: strippedUrl, completion: completion)
             importerQueue.addOperation(importer)
         }
+    #endif
 
+    #if !os(watchOS) && !APPCLIP
         func importPodcastsFromOpml(_ opmlFile: URL, progressWindow: ShiftyLoadingAlert? = nil) {
             importerQueue.cancelAllOperations()
 

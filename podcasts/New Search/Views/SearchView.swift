@@ -1,4 +1,5 @@
 import SwiftUI
+import PocketCastsUtils
 
 class SearchVisibilityModel: ObservableObject {
     @Published var isSearching = false
@@ -13,14 +14,18 @@ struct SearchView: View {
     var body: some View {
         searchView
         .ignoresSafeArea(.keyboard)
-        .modifier(MiniPlayerPadding())
+        .miniPlayerSafeAreaInset()
         .applyDefaultThemeOptions()
     }
 
     @ViewBuilder
     private var searchView: some View {
         if displaySearch.isSearching {
-            SearchResultsView()
+            if FeatureFlag.searchImprovements.enabled {
+                NewSearchResultsView()
+            } else {
+                SearchResultsView()
+            }
         } else {
             SearchHistoryView()
         }

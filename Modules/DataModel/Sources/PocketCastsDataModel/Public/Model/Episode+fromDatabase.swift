@@ -1,8 +1,11 @@
 import Foundation
-import FMDB
 
 extension Episode {
-    static func from(resultSet rs: FMResultSet) -> Episode {
+    static func from(resultSet rs: PCDBResultSet) -> Episode? {
+        guard rs.longLongInt(forColumn: "id") != 0 else {
+            return nil
+        }
+
         let episode = Episode()
         episode.id = rs.longLongInt(forColumn: "id")
         episode.addedDate = DBUtils.convertDate(value: rs.double(forColumn: "addedDate"))
@@ -14,6 +17,7 @@ extension Episode {
         episode.episodeDescription = rs.string(forColumn: "episodeDescription")
         episode.episodeStatus = rs.int(forColumn: "episodeStatus")
         episode.fileType = rs.string(forColumn: "fileType")
+        episode.contentType = rs.string(forColumn: "contentType")
         episode.keepEpisode = rs.bool(forColumn: "keepEpisode")
         episode.playedUpTo = rs.double(forColumn: "playedUpTo")
         episode.duration = rs.double(forColumn: "duration")
@@ -41,6 +45,9 @@ extension Episode {
         episode.lastArchiveInteractionDate = DBUtils.convertDate(value: rs.double(forColumn: "lastArchiveInteractionDate"))
         episode.excludeFromEpisodeLimit = rs.bool(forColumn: "excludeFromEpisodeLimit")
         episode.starredModified = rs.longLongInt(forColumn: "starredModified")
+        episode.deselectedChapters = rs.string(forColumn: "deselectedChapters")
+        episode.deselectedChaptersModified = rs.longLongInt(forColumn: "deselectedChaptersModified")
+        episode.wasDeleted = rs.bool(forColumn: "wasDeleted")
         return episode
     }
 }

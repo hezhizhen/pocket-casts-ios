@@ -38,25 +38,35 @@ public enum ServerConstants {
             production() ? "https://lists.pocketcasts.com/" : "https://lists.pocketcasts.net/"
         }
 
+        public static var search: String {
+            production() ? "https://search.pocketcasts.com/" : "https://search.pocketcasts.net/"
+        }
+
         public static let support = "https://support.pocketcasts.com/ios/"
-        public static let cancelSubscription = "https://support.pocketcasts.com/article/subscription-info/"
+        public static let cancelSubscription = "https://support.pocketcasts.com/knowledge-base/how-to-cancel-a-subscription/"
         public static let termsOfUse = "https://support.pocketcasts.com/article/terms-of-use/"
         public static let privacyPolicy = "https://support.pocketcasts.com/article/privacy-policy/"
         public static let plusInfo = "https://pocketcasts.com/plus/"
         public static let pocketcastsDotCom = "https://pocketcasts.com/"
         public static let automatticDotCom = "https://automattic.com/"
         public static let automatticWorkWithUs = "https://automattic.com/work-with-us/"
-        public static let appStoreReview = "https://itunes.apple.com/app/id414834813?action=write-review"
+        public static let appStore = "https://apps.apple.com/app/id414834813"
+        public static let appStoreReview = "https://apps.apple.com/app/id414834813?action=write-review"
+        public static let podrollLearnMore = "https://support.pocketcasts.com/knowledge-base/podroll/"
     }
 
     private static func production() -> Bool {
-        ServerConfig.shared.syncDelegate?.production() ?? true
+        guard let delegate = ServerConfig.shared.syncDelegate else {
+            return true
+        }
+        return delegate.production()
     }
 
     public enum HttpConstants {
         public static let ok = 200
         public static let notModified = 304
         public static let unauthorized = 401
+        public static let forbidden = 403
         public static let notFound = 404
         public static let serverError = 500
         public static let badRequest = 400
@@ -75,6 +85,8 @@ public enum ServerConstants {
         public static let cacheControl = "Cache-Control"
         public static let date = "Date"
         public static let etag = "ETag"
+        public static let userRegion = "X-User-Region"
+        public static let appLanguage = "X-App-Language"
     }
 
     public enum Timeouts {
@@ -115,12 +127,12 @@ public enum ServerConstants {
         static let subscriptionAutoRenewing = "SJSubscriptionAutorenewing"
         static let subscriptionPlatform = "SJSubscriptionPlatform"
         static let subscriptionGiftDays = "SJSubscriptionGiftDays"
-        static let subscriptionGiftAcknowledgement = "SJSubscriptionGiftAcknowledgement"
+        public static let subscriptionGiftAcknowledgement = "SJSubscriptionGiftAcknowledgement"
         public static let subscriptionFrequency = "SJSubscriptionFrequency"
         static let subscriptionPodcasts = "SJSubscriptionPodcasts"
         static let subscriptionType = "SJSubscriptionType"
         static let subscriptionTier = "SJSubscriptionTier"
-        static let marketingOptInKey = "SJMarketingOptIn"
+        public static let marketingOptInKey = "SJMarketingOptIn"
         static let marketingOptInNeedsSyncKey = "SJMarketingOptInNeedsSync"
         static let subscriptionGiftAcknowledgementNeedsSyncKey = "SJGiftAcknowledgementNeedsSync"
         static let filesLastModifiedKey = "UserFilesLastModified"
@@ -138,10 +150,17 @@ public enum ServerConstants {
         static let statsAutoSkipServer = "StatsIntroSkipServer"
         static let statsStartedDateServer = "StatsStartedDateServer"
         static let userId = "UserId"
+        static let removeBannerAds = "SJSubscriptionRemoveBannerAds"
+        static let removeDiscoverAds = "SJSubscriptionRemoveDiscoverAds"
+        static let subscriptionCreateDate = "SJSubscriptionCreateDate"
     }
 
     public enum Limits {
         static let maxHistoryItems = 100
+#if watchOS
+        static let maxEpisodesToSync = 200
+#else
         static let maxEpisodesToSync = 2000
+#endif
     }
 }

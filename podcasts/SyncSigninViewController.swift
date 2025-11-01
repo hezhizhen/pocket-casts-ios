@@ -73,7 +73,6 @@ class SyncSigninViewController: PCViewController, UITextFieldDelegate {
         }
     }
 
-    @IBOutlet var mainButtonBottomConstraint: NSLayoutConstraint!
     @IBOutlet var activityIndicatorView: UIActivityIndicatorView! {
         didSet {
             activityIndicatorView.isHidden = true
@@ -82,11 +81,12 @@ class SyncSigninViewController: PCViewController, UITextFieldDelegate {
 
     weak var delegate: SyncSigninDelegate?
 
-    var dismissOnCancel = false
-
     private var progressAlert: ShiftyLoadingAlert?
 
     private var totalPodcastsToImport = -1
+
+    // If set to true it will login and start a full sync right away
+    var loginAgain = false
 
     // MARK: - UIView Methods
 
@@ -96,19 +96,11 @@ class SyncSigninViewController: PCViewController, UITextFieldDelegate {
         mainButton.accessibilityLabel = L10n.signIn
         updateButtonState()
 
-        if dismissOnCancel {
-            let closeButton = UIBarButtonItem(image: UIImage(named: "cancel"), style: .done, target: self, action: #selector(closeTapped))
-            closeButton.accessibilityLabel = L10n.accessibilityCloseDialog
-            navigationItem.leftBarButtonItem = closeButton
-        } else {
-            navigationItem.leftBarButtonItem = UIBarButtonItem(image: UIImage(named: "nav-back"), style: .done, target: self, action: #selector(closeTapped))
-        }
+        navigationItem.leftBarButtonItem = UIBarButtonItem(image: UIImage(named: "nav-back"), style: .done, target: self, action: #selector(closeTapped))
 
         navigationController?.navigationBar.setValue(true, forKey: "hidesShadow")
 
-        NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillShow), name: UIResponder.keyboardWillShowNotification, object: nil)
-        NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillHide), name: UIResponder.keyboardWillHideNotification, object: nil)
-        originalButtonConstant = mainButtonBottomConstraint.constant
+        view.keyboardLayoutGuide.topAnchor.constraint(equalTo: mainButton.bottomAnchor, constant: 16).isActive = true
 
         Analytics.track(.signInShown)
     }
@@ -132,6 +124,10 @@ class SyncSigninViewController: PCViewController, UITextFieldDelegate {
         addCustomObserver(ServerNotifications.syncCompleted, selector: #selector(syncCompleted))
         addCustomObserver(ServerNotifications.syncFailed, selector: #selector(syncCompleted))
         addCustomObserver(ServerNotifications.podcastRefreshFailed, selector: #selector(syncCompleted))
+
+        if loginAgain, let syncingEmail = ServerSettings.syncingEmail(), let password = ServerSettings.syncingPassword() {
+            startSignIn(syncingEmail, password: password)
+        }
     }
 
     override func viewDidDisappear(_ animated: Bool) {
@@ -154,11 +150,7 @@ class SyncSigninViewController: PCViewController, UITextFieldDelegate {
     @objc func closeTapped() {
         Analytics.track(.signInDismissed)
 
-        if dismissOnCancel {
-            dismiss(animated: true, completion: nil)
-        } else {
-            navigationController?.popViewController(animated: true)
-        }
+        navigationController?.popViewController(animated: true)
     }
 
     @IBAction func signInTapped(_ sender: Any) {
@@ -212,6 +204,10 @@ class SyncSigninViewController: PCViewController, UITextFieldDelegate {
             } else {
                 // if there's no delegate registered to handle a sign in finishing, just dismiss
                 self.closeTapped()
+            }
+
+            if loginAgain {
+                dismiss(animated: true)
             }
         }
     }
@@ -294,6 +290,7 @@ class SyncSigninViewController: PCViewController, UITextFieldDelegate {
                 self.progressAlert?.showAlert(self, hasProgress: false, completion: {
                     // clear any previously stored tokens as we're signing in again and we might have one in Keychain already
                     SyncManager.clearTokensFromKeyChain()
+                    FileLog.shared.addMessage("SyncSigninViewController.startSignIn clearTokensFromKeyChain")
 
                     self.handleSuccessfulSignIn(username, password: password, userId: userId)
                     RefreshManager.shared.refreshPodcasts(forceEvenIfRefreshedRecently: true)
@@ -330,8 +327,12 @@ class SyncSigninViewController: PCViewController, UITextFieldDelegate {
         ServerSettings.userId = userId
         ServerSettings.saveSyncingPassword(password)
 
-        // we've signed in, set all our existing podcasts to be non synced
-        DataManager.sharedManager.markAllPodcastsUnsynced()
+        // we've signed in, set all our existing podcasts to
+        // be non synced if the user never logged in before
+        if (FeatureFlag.onlyMarkPodcastsUnsyncedForNewUsers.enabled && ServerSettings.lastSyncTime == nil)
+            || !FeatureFlag.onlyMarkPodcastsUnsyncedForNewUsers.enabled {
+            DataManager.sharedManager.markAllPodcastsUnsynced()
+        }
 
         SyncManager.syncReason = .login
         ServerSettings.clearLastSyncTime()
@@ -364,32 +365,6 @@ class SyncSigninViewController: PCViewController, UITextFieldDelegate {
         }
 
         return false
-    }
-
-    private var originalButtonConstant: CGFloat = 60
-    @objc func keyboardWillShow(notification: NSNotification) {
-        if let keyboardSize = (notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue {
-            mainButtonBottomConstraint.constant = originalButtonConstant + keyboardSize.height
-            var animationDuration = 0.3
-            if let keyboardDuration = (notification.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) {
-                animationDuration = keyboardDuration
-            }
-
-            UIView.animate(withDuration: animationDuration, animations: {
-                self.view.layoutIfNeeded()
-            }, completion: nil)
-        }
-    }
-
-    @objc func keyboardWillHide(notification: NSNotification) {
-        mainButtonBottomConstraint.constant = originalButtonConstant
-        var animationDuration = 0.3
-        if let keyboardDuration = (notification.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) {
-            animationDuration = keyboardDuration
-        }
-        UIView.animate(withDuration: animationDuration, animations: {
-            self.view.layoutIfNeeded()
-        }, completion: nil)
     }
 }
 

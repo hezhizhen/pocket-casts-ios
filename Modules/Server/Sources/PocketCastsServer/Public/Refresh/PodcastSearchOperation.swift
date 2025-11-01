@@ -34,7 +34,7 @@ class PodcastSearchOperation: Operation {
                 if !shouldRetry { break }
 
                 pollCount += 1
-                let backOffTime = pollBackoffTime(pollCount: pollCount)
+                let backOffTime = pollCount.pollWaitingTime
                 if backOffTime < 0 {
                     completion(PodcastSearchResponse.failedResponse())
                     break
@@ -57,10 +57,8 @@ class PodcastSearchOperation: Operation {
         dispatchGroup.enter()
         URLSession.shared.dataTask(with: request) { data, _, error in
             guard let data = data, error == nil else {
-                shouldRetry = false
-                self.completion(PodcastSearchResponse.failedResponse())
+                shouldRetry = true
                 self.dispatchGroup.leave()
-
                 return
             }
 
@@ -82,19 +80,5 @@ class PodcastSearchOperation: Operation {
         _ = dispatchGroup.wait(timeout: .now() + 15.seconds)
 
         return shouldRetry
-    }
-
-    private func pollBackoffTime(pollCount: Int) -> TimeInterval {
-        if pollCount < 3 {
-            return 2
-        }
-        if pollCount < 7 {
-            return 5
-        }
-        if pollCount == 7 {
-            return 10
-        }
-
-        return -1
     }
 }

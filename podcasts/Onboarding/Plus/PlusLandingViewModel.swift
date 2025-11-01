@@ -1,32 +1,35 @@
 import Foundation
 import PocketCastsServer
+import PocketCastsUtils
 import SwiftUI
 
 class PlusLandingViewModel: PlusPurchaseModel {
     weak var navigationController: UINavigationController? = nil
 
     let displayedProducts: [UpgradeTier]
-    var initialProduct: Constants.ProductInfo? = nil
-    var continuePurchasing: Constants.ProductInfo? = nil
+    var initialProduct: ProductInfo? = nil
+    var continuePurchasing: ProductInfo? = nil
     let source: Source
+    let viewSource: PlusUpgradeViewSource
 
-    init(source: Source, config: Config? = nil, purchaseHandler: IapHelper = .shared) {
-        self.displayedProducts = config?.products ?? [.plus, .patron]
+    init(source: Source, viewSource: PlusUpgradeViewSource = .unknown, config: Config? = nil, purchaseHandler: IAPHelper = .shared) {
+        let plus = UpgradeTier.plus.update(header: viewSource.paywallHeadline())
+        self.displayedProducts = config?.products ?? [plus, .patron]
         self.initialProduct = config?.displayProduct
         self.continuePurchasing = config?.continuePurchasing
         self.source = source
+        self.viewSource = viewSource
 
         super.init(purchaseHandler: purchaseHandler)
 
         self.loadPrices()
     }
 
-    func unlockTapped(_ product: Constants.ProductInfo) {
+    func unlockTapped(_ product: ProductInfo) {
         OnboardingFlow.shared.track(.plusPromotionUpgradeButtonTapped)
 
         guard SyncManager.isUserLoggedIn() else {
-            let controller = LoginCoordinator.make(in: navigationController, continuePurchasing: product)
-            navigationController?.pushViewController(controller, animated: true)
+            presentLogin(with: product)
             return
         }
 
@@ -50,10 +53,18 @@ class PlusLandingViewModel: PlusPurchaseModel {
         OnboardingFlow.shared.track(.plusPromotionDismissed)
     }
 
-    func dismissTapped() {
+    func presentLogin(with product: ProductInfo? = nil) {
+        let controller = LoginCoordinator.make(in: navigationController, continuePurchasing: product)
+        navigationController?.pushViewController(controller, animated: true)
+    }
+
+    func dismissTapped(buttonTapped: Bool = false) {
+        if buttonTapped {
+            OnboardingFlow.shared.track(.plusPromotionNotNowButtonTapped)
+        }
         OnboardingFlow.shared.track(.plusPromotionDismissed)
 
-        guard source == .accountCreated else {
+        guard source == .accountCreated && !FeatureFlag.newOnboardingAccountCreation.enabled else {
             navigationController?.dismiss(animated: true)
             return
         }
@@ -62,35 +73,28 @@ class PlusLandingViewModel: PlusPurchaseModel {
         navigationController?.pushViewController(controller, animated: true)
     }
 
-    func purchaseTitle(for tier: UpgradeTier, frequency: Constants.PlanFrequency) -> String {
-        guard let product = product(for: tier.plan, frequency: frequency) else {
-            return L10n.loading
-        }
-
-        if product.freeTrialDuration != nil {
-            return L10n.plusStartMyFreeTrial
-        } else {
-            return tier.buttonLabel
-        }
+    func changedSubscriptionTier(_ index: Int) {
+        let tier = displayedProducts[index]
+        OnboardingFlow.shared.track(.plusPromotionSubscriptionTierChanged, properties: ["value": tier.title.lowercased()])
     }
 
-    func purchaseSubtitle(for tier: UpgradeTier, frequency: Constants.PlanFrequency) -> String {
-        guard let product = product(for: tier.plan, frequency: frequency) else {
-            return ""
-        }
-
-        if let freeTrialDuration = product.freeTrialDuration {
-            return L10n.plusStartTrialDurationPrice(freeTrialDuration, product.price)
-        } else {
-            return product.price
-        }
+    func changedSubscriptionPeriod(_ value: PlanFrequency) {
+        OnboardingFlow.shared.track(.plusPromotionSubscriptionFrequencyChanged, properties: ["value": value.rawValue])
     }
 
-    private func product(for plan: Constants.Plan, frequency: Constants.PlanFrequency) -> PlusProductPricingInfo? {
-        pricingInfo.products.first(where: { $0.identifier == (frequency == .yearly ? plan.yearly : plan.monthly) })
+    func termsOfUseTapped() {
+        OnboardingFlow.shared.track(.plusPromotionTermsAndConditionsTapped)
     }
 
-    private func loadPricesAndContinue(product: Constants.ProductInfo) {
+    func privacyPolicyTapped() {
+        OnboardingFlow.shared.track(.plusPromotionPrivacyPolicyTapped)
+    }
+
+    func showError() {
+        SJUIUtils.showAlert(title: L10n.plusUpgradeNoInternetTitle, message: L10n.plusUpgradeNoInternetMessage, from: navigationController)
+    }
+
+    private func loadPricesAndContinue(product: ProductInfo) {
         loadPrices {
             switch self.priceAvailability {
             case .available:
@@ -107,45 +111,33 @@ class PlusLandingViewModel: PlusPurchaseModel {
         case upsell
         case login
         case accountCreated
+        case accountScreen
     }
 
     struct Config {
         var products: [UpgradeTier]? = nil
-        var displayProduct: Constants.ProductInfo? = nil
-        var continuePurchasing: Constants.ProductInfo? = nil
+        var displayProduct: ProductInfo? = nil
+        var continuePurchasing: ProductInfo? = nil
     }
 }
 
 private extension PlusLandingViewModel {
-    func showModal(product: Constants.ProductInfo) {
-        if FeatureFlag.patron.enabled {
-            guard let product = self.product(for: product.plan, frequency: product.frequency) else {
-                state = .failed
-                return
-            }
-
-            purchase(product: product.identifier)
+    func showModal(product: ProductInfo) {
+        guard let product = self.product(for: product.plan, frequency: product.frequency) else {
+            state = .failed
             return
         }
 
-        guard let navigationController else { return }
-
-        let controller = PlusPurchaseModel.make(in: navigationController,
-                                                plan: product.plan,
-                                                selectedPrice: product.frequency)
-        controller.presentModally(in: navigationController)
-    }
-
-    func showError() {
-        SJUIUtils.showAlert(title: L10n.plusUpgradeNoInternetTitle, message: L10n.plusUpgradeNoInternetMessage, from: navigationController)
+        purchase(product: product.identifier)
+        return
     }
 }
 
 extension PlusLandingViewModel {
-    static func make(in navigationController: UINavigationController? = nil, from source: Source, config: PlusLandingViewModel.Config? = nil) -> UIViewController {
-        let viewModel = PlusLandingViewModel(source: source, config: config)
+    static func make(in navigationController: UINavigationController? = nil, from source: Source, viewSource: PlusUpgradeViewSource, config: PlusLandingViewModel.Config? = nil, customTitle: String? = nil) -> UIViewController {
+        let viewModel = PlusLandingViewModel(source: source, viewSource: viewSource, config: config)
 
-        let view = Self.view(with: viewModel)
+        let view = Self.view(with: viewModel, viewSource: viewSource)
         let controller = PlusHostingViewController(rootView: view)
 
         controller.viewModel = viewModel
@@ -155,18 +147,33 @@ extension PlusLandingViewModel {
         let navController = navigationController ?? UINavigationController(rootViewController: controller)
         viewModel.navigationController = navController
         viewModel.parentController = navController
+        viewModel.customTitle = customTitle
 
         return (navigationController == nil) ? navController : controller
     }
 
     @ViewBuilder
-    private static func view(with viewModel: PlusLandingViewModel) -> some View {
-        if FeatureFlag.patron.enabled {
-            UpgradeLandingView(viewModel: viewModel)
-                .setupDefaultEnvironment()
+    private static func view(with viewModel: PlusLandingViewModel, viewSource: PlusUpgradeViewSource) -> some View {
+        if FeatureFlag.upgradeExperiment.enabled, !SubscriptionHelper.hasActiveSubscription(), viewSource.isEligibleForExperiment() {
+            let variant = ABTestProvider.shared.variation(for: .pocketcastsPaywallUpgradeIOSABTest)
+            let customTreatment = variant.getCustomTreatment()
+
+            switch customTreatment {
+            case .featuresTreatment:
+                PlusPaywallContainer(viewModel: viewModel, type: .features)
+            case .reviewsTreatment:
+                PlusPaywallContainer(viewModel: viewModel, type: .reviews)
+            default:
+                defaultPaywall(with: viewModel)
+            }
         } else {
-            PlusLandingView(viewModel: viewModel)
-                .setupDefaultEnvironment()
+            defaultPaywall(with: viewModel, headline: viewSource.paywallHeadline())
         }
+    }
+
+    @ViewBuilder
+    private static func defaultPaywall(with viewModel: PlusLandingViewModel, headline: String? = nil) -> some View {
+            UpgradeLandingView(viewModel: viewModel)
+                .setupDefaultEnvironment(theme: Theme.init(previewTheme: .light))
     }
 }

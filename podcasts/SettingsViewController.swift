@@ -5,11 +5,12 @@ import UIKit
 import WatchConnectivity
 
 class SettingsViewController: PCViewController, UITableViewDataSource, UITableViewDelegate {
-    private enum TableRow: String {
+    enum TableRow: String {
         case general, notifications, appearance, storageAndDataUse
         case autoArchive, autoDownload, autoAddToUpNext, siriShortcuts
         case watch, customFiles, importSteps, opml
         case about, pocketCastsPlus, privacy
+        case upNextHistory, foldersHistory
         case headphoneControls
         case developer, beta
 
@@ -65,6 +66,10 @@ class SettingsViewController: PCViewController, UITableViewDataSource, UITableVi
                 return ("Beta Features", UIImage(systemName: "testtube.2"))
             case .headphoneControls:
                 return (L10n.settingsHeadphoneControls, .init(named: "settings_headphone_controls"))
+            case .upNextHistory:
+                return (L10n.upNextHistory, .init(named: "upnext"))
+            case .foldersHistory:
+                return (L10n.foldersHistory, .init(named: "folder-empty"))
             }
         }
     }
@@ -86,6 +91,7 @@ class SettingsViewController: PCViewController, UITableViewDataSource, UITableVi
             [.autoArchive, .autoDownload, .autoAddToUpNext],
             [.storageAndDataUse, .siriShortcuts, .headphoneControls, .watch, .customFiles],
             [.importSteps, .opml],
+            [.upNextHistory, .foldersHistory],
             [.privacy, .about]
         ]
     }()
@@ -95,13 +101,13 @@ class SettingsViewController: PCViewController, UITableViewDataSource, UITableVi
     @IBOutlet var settingsTable: UITableView! {
         didSet {
             settingsTable.register(UINib(nibName: "TopLevelSettingsCell", bundle: nil), forCellReuseIdentifier: settingsCellId)
-            settingsTable.applyInsetForMiniPlayer()
         }
     }
 
     override func viewDidLoad() {
         super.viewDidLoad()
         title = L10n.settings
+        insetAdjuster.setupInsetAdjustmentsForMiniPlayer(scrollView: settingsTable)
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -143,6 +149,10 @@ class SettingsViewController: PCViewController, UITableViewDataSource, UITableVi
         tableView.deselectRow(at: indexPath, animated: true)
 
         let tableRow = tableData[indexPath.section][indexPath.row]
+        selectRow(tableRow)
+    }
+
+    func selectRow(_ tableRow: TableRow) {
         switch tableRow {
         case .general:
             navigationController?.pushViewController(GeneralSettingsViewController(), animated: true)
@@ -179,11 +189,7 @@ class SettingsViewController: PCViewController, UITableViewDataSource, UITableVi
         case .watch:
             navigationController?.pushViewController(WatchSettingsViewController(), animated: true)
         case .pocketCastsPlus:
-            if FeatureFlag.patron.enabled {
-                navigationController?.present(OnboardingFlow.shared.begin(flow: .plusUpsell, source: "settings"), animated: true)
-            } else {
-                navigationController?.pushViewController(PlusDetailsViewController(), animated: true)
-            }
+                navigationController?.present(OnboardingFlow.shared.begin(flow: .plusUpsell, source: .settings), animated: true)
         case .privacy:
             navigationController?.pushViewController(PrivacySettingsViewController(), animated: true)
         case .developer:
@@ -195,6 +201,12 @@ class SettingsViewController: PCViewController, UITableViewDataSource, UITableVi
             navigationController?.pushViewController(hostingController, animated: true)
         case .headphoneControls:
             navigationController?.pushViewController(HeadphoneSettingsViewController(), animated: true)
+        case .upNextHistory:
+            let upNextHistory = UpNextHistoryViewController()
+            navigationController?.pushViewController(upNextHistory, animated: true)
+        case .foldersHistory:
+            let foldersHistoryViewController = FolderHistoryViewController()
+            navigationController?.pushViewController(foldersHistoryViewController, animated: true)
         }
     }
 

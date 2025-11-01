@@ -15,12 +15,18 @@ class NowPlayingAnimationView: UIView {
         }
     }
 
-    private var animationView: AnimationView
+    private var animationView: LottieAnimationView
 
     required init?(coder aDecoder: NSCoder) {
-        animationView = AnimationView(name: "nowplaying")
+        animationView = LottieAnimationView(name: "nowplaying")
 
         super.init(coder: aDecoder)
+    }
+
+    func setFillColor(_ color: UIColor) {
+        let keypath = AnimationKeypath(keys: ["**", "Fill 1", "**", "Color"])
+        let colorProvider = ColorValueProvider(color.lottieColorValue)
+        animationView.setValueProvider(colorProvider, keypath: keypath)
     }
 
     override func awakeFromNib() {

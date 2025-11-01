@@ -3,6 +3,7 @@ import Foundation
 import PocketCastsDataModel
 import PocketCastsServer
 import UIKit
+import PocketCastsUtils
 
 class CarPlaySceneDelegate: CustomObserver, CPTemplateApplicationSceneDelegate, CPNowPlayingTemplateObserver {
     var interfaceController: CPInterfaceController?
@@ -12,6 +13,8 @@ class CarPlaySceneDelegate: CustomObserver, CPTemplateApplicationSceneDelegate, 
     weak var visibleTemplate: CPTemplate?
 
     func templateApplicationScene(_ templateApplicationScene: CPTemplateApplicationScene, didConnect interfaceController: CPInterfaceController) {
+        FileLog.shared.addMessage("CarPlay: didConnect")
+
         self.interfaceController = interfaceController
         interfaceController.delegate = self
 
@@ -23,6 +26,7 @@ class CarPlaySceneDelegate: CustomObserver, CPTemplateApplicationSceneDelegate, 
     }
 
     func templateApplicationScene(_ templateApplicationScene: CPTemplateApplicationScene, didDisconnectInterfaceController interfaceController: CPInterfaceController) {
+        FileLog.shared.addMessage("CarPlay: didDisconnect")
         removeAllCustomObservers()
         self.interfaceController?.delegate = nil
         self.interfaceController = nil
@@ -46,7 +50,7 @@ class CarPlaySceneDelegate: CustomObserver, CPTemplateApplicationSceneDelegate, 
             Constants.Notifications.opmlImportCompleted,
 
             // Filters
-            Constants.Notifications.filterChanged,
+            Constants.Notifications.playlistChanged,
 
             // Episode changes
             Constants.Notifications.episodeDownloaded,
@@ -76,7 +80,8 @@ class CarPlaySceneDelegate: CustomObserver, CPTemplateApplicationSceneDelegate, 
             Constants.Notifications.playbackTrackChanged,
             Constants.Notifications.playbackEnded,
             Constants.Notifications.podcastChaptersDidUpdate,
-            Constants.Notifications.playbackStarted
+            Constants.Notifications.playbackStarted,
+            Constants.Notifications.episodeStarredChanged
         ]
 
         for notification in playbackNotifications {
@@ -146,7 +151,33 @@ class CarPlaySceneDelegate: CustomObserver, CPTemplateApplicationSceneDelegate, 
             buttons.append(chapterButton)
         }
 
+        if let starButton = starButton() {
+            buttons.append(starButton)
+        }
+
         template.updateNowPlayingButtons(buttons)
+    }
+
+    private func starButton() -> CPNowPlayingImageButton? {
+        let episode = PlaybackManager.shared.currentEpisode() as? Episode
+
+        let starImageName = episode?.keepEpisode == true ? "star_filled" : "star_empty"
+
+        // Should never happen
+        guard let image = UIImage(named: starImageName) else { return nil }
+
+        let starButton = CPNowPlayingImageButton(image: image) { _ in
+            guard let episode else { return }
+
+            AnalyticsEpisodeHelper.shared.currentSource = .carPlay
+
+            EpisodeManager.setStarred(!episode.keepEpisode, episode: episode, updateSyncStatus: SyncManager.isUserLoggedIn())
+        }
+
+        // This shouldn't happen, but disable the button if it does since the action won't do anything
+        starButton.isEnabled = episode != nil
+
+        return starButton
     }
 
     // MARK: - CPNowPlayingTemplateObserver

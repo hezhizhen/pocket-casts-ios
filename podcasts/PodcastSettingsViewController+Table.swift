@@ -1,6 +1,7 @@
 import IntentsUI
 import PocketCastsDataModel
 import PocketCastsServer
+import PocketCastsUtils
 import UIKit
 
 extension PodcastSettingsViewController: UITableViewDataSource, UITableViewDelegate {
@@ -55,8 +56,8 @@ extension PodcastSettingsViewController: UITableViewDataSource, UITableViewDeleg
             let cell = tableView.dequeueReusableCell(withIdentifier: PodcastSettingsViewController.switchCellId, for: indexPath) as! SwitchCell
             cell.cellLabel.text = L10n.settingsNotifications
             cell.cellSwitch.onTintColor = podcast.switchTintColor()
-            cell.setImage(imageName: "settings-notifications")
-            cell.cellSwitch.isOn = podcast.pushEnabled && NotificationsHelper.shared.pushEnabled()
+            cell.setImage(imageName: "settings_notifications")
+            cell.cellSwitch.isOn = podcast.isPushEnabled && NotificationsHelper.shared.pushEnabled()
 
             cell.cellSwitch.removeTarget(self, action: #selector(notificationChanged(_:)), for: UIControl.Event.valueChanged)
             cell.cellSwitch.addTarget(self, action: #selector(notificationChanged(_:)), for: UIControl.Event.valueChanged)
@@ -78,7 +79,7 @@ extension PodcastSettingsViewController: UITableViewDataSource, UITableViewDeleg
             cell.cellLabel.text = L10n.settingsQueuePosition
             cell.setImage(imageName: nil)
 
-            let upNextOrder = Int(podcast.autoAddToUpNext)
+            let upNextOrder = podcast.autoAddToUpNextSetting()?.rawValue
             cell.cellSecondaryLabel.text = (upNextOrder == AutoAddToUpNextSetting.addLast.rawValue) ? L10n.bottom : L10n.top
 
             return cell
@@ -93,7 +94,7 @@ extension PodcastSettingsViewController: UITableViewDataSource, UITableViewDeleg
         case .playbackEffects:
             let cell = tableView.dequeueReusableCell(withIdentifier: PodcastSettingsViewController.disclosureCellId, for: indexPath) as! DisclosureCell
             cell.cellLabel.text = PlayerAction.effects.title()
-            let imageName = podcast.overrideGlobalEffects ? "podcast-effects-on" : "podcast-effects-off"
+            let imageName = podcast.isEffectsOverridden ? "podcast-effects-on" : "podcast-effects-off"
             cell.setImage(imageName: imageName, tintColor: podcast.iconTintColor())
             cell.cellSecondaryLabel.text = nil
 
@@ -113,10 +114,10 @@ extension PodcastSettingsViewController: UITableViewDataSource, UITableViewDeleg
             cell.onValueChanged = { [weak self] value in
                 guard let podcast = self?.podcast else { return }
 
-                podcast.startFrom = Int32(value)
+                podcast.autoStartFrom = Int32(value)
                 podcast.syncStatus = SyncStatus.notSynced.rawValue
                 DataManager.sharedManager.save(podcast: podcast)
-                cell.cellSecondaryLabel.text = L10n.timeShorthand(Int(podcast.startFrom))
+                cell.cellSecondaryLabel.text = L10n.timeShorthand(Int(podcast.autoStartFrom))
 
                 self?.debounce.call {
                     Analytics.track(.podcastSettingsSkipFirstChanged, properties: ["value": value])
@@ -133,16 +134,16 @@ extension PodcastSettingsViewController: UITableViewDataSource, UITableViewDeleg
             cell.timeStepper.maximumValue = 40.minutes
             cell.timeStepper.bigIncrements = 5.seconds
             cell.timeStepper.smallIncrements = 5.seconds
-            cell.timeStepper.currentValue = TimeInterval(podcast.skipLast)
+            cell.timeStepper.currentValue = TimeInterval(podcast.autoSkipLast)
             cell.configureWithImage(imageName: "settings-skipoutros", tintColor: podcast.iconTintColor())
 
             cell.onValueChanged = { [weak self] value in
                 guard let podcast = self?.podcast else { return }
 
-                podcast.skipLast = Int32(value)
+                podcast.autoSkipLast = Int32(value)
                 podcast.syncStatus = SyncStatus.notSynced.rawValue
                 DataManager.sharedManager.save(podcast: podcast)
-                cell.cellSecondaryLabel.text = L10n.timeShorthand(Int(podcast.skipLast))
+                cell.cellSecondaryLabel.text = L10n.timeShorthand(Int(podcast.autoSkipLast))
 
                 self?.debounce.call {
                     Analytics.track(.podcastSettingsSkipLastChanged, properties: ["value": value])
@@ -158,15 +159,23 @@ extension PodcastSettingsViewController: UITableViewDataSource, UITableViewDeleg
 
             return cell
         case .inFilters:
+            let playlistRebrandingEnabled = FeatureFlag.playlistsRebranding.enabled
             let cell = tableView.dequeueReusableCell(withIdentifier: PodcastSettingsViewController.disclosureCellId, for: indexPath) as! DisclosureCell
             cell.cellSecondaryLabel.text = nil
-            cell.setImage(imageName: "settings_filter", tintColor: podcast.iconTintColor())
+            cell.setImage(
+                imageName: playlistRebrandingEnabled ? "playlists_tab" : "settings_filter",
+                tintColor: podcast.iconTintColor()
+            )
 
-            let filterCount = filterUuidsPodcastAppearsIn().count
-            if filterCount == 0 {
-                cell.cellLabel.text = L10n.settingsNotInFilters
+            let playlistsCount = playlistUuidsPodcastAppearsIn().count
+            if playlistsCount == 0 {
+                cell.cellLabel.text = playlistRebrandingEnabled ? L10n.settingsNotInSmartPlaylists : L10n.settingsNotInFilters
             } else {
-                cell.cellLabel.text = filterCount == 1 ? L10n.settingsInFiltersSingular : L10n.settingsInFiltersPluralFormat(filterCount.localized())
+                cell.cellLabel.text = if playlistsCount == 1 {
+                    playlistRebrandingEnabled ? L10n.settingsInSmartPlaylistSingular : L10n.settingsInFiltersSingular
+                } else {
+                    playlistRebrandingEnabled ? L10n.settingsInSmartPlaylistsPluralFormat(playlistsCount.localized()) : L10n.settingsInFiltersPluralFormat(playlistsCount.localized())
+                }
             }
 
             return cell
@@ -185,7 +194,7 @@ extension PodcastSettingsViewController: UITableViewDataSource, UITableViewDeleg
             }
         case .unsubscribe:
             let cell = tableView.dequeueReusableCell(withIdentifier: PodcastSettingsViewController.destructiveButtonCellId, for: indexPath) as! DestructiveButtonCell
-            cell.buttonTitle.text = L10n.unsubscribe
+            cell.buttonTitle.text = FeatureFlag.useFollowNaming.enabled ? L10n.unfollow : L10n.unsubscribe
             cell.buttonTitle.textColor = ThemeColor.support05()
             return cell
         }
@@ -231,28 +240,29 @@ extension PodcastSettingsViewController: UITableViewDataSource, UITableViewDeleg
             let archiveController = PodcastArchiveViewController(podcast: podcast)
             navigationController?.pushViewController(archiveController, animated: true)
         } else if row == .inFilters {
-            let filterSelectionViewController = FilterSelectionViewController()
-            filterSelectionViewController.allFilters = filtersPodcastCanAppearIn()
-            filterSelectionViewController.selectedFilters = filterUuidsPodcastAppearsIn()
-            filterSelectionViewController.filterSelected = { [weak self] filter in
+            let playlistSelectionViewController = PlaylistSelectionViewController()
+            playlistSelectionViewController.navigationTitle = FeatureFlag.playlistsRebranding.enabled ? L10n.settingsSelectSmartPlaylistsPlural : L10n.settingsSelectFiltersPlural
+            playlistSelectionViewController.allPlaylists = playlistsPodcastCanAppearIn()
+            playlistSelectionViewController.selectedPlaylists = playlistUuidsPodcastAppearsIn()
+            playlistSelectionViewController.playlistSelected = { [weak self] playlist in
                 guard let self = self else { return }
 
-                filter.addPodcast(podcastUuid: self.podcast.uuid)
-                DataManager.sharedManager.save(filter: filter)
-                NotificationCenter.postOnMainThread(notification: Constants.Notifications.filterChanged)
+                playlist.addPodcast(podcastUuid: self.podcast.uuid)
+                DataManager.sharedManager.save(playlist: playlist)
+                NotificationCenter.postOnMainThread(notification: Constants.Notifications.playlistChanged)
 
                 Analytics.track(.filterUpdated, properties: ["group": "podcasts", "source": "podcast_settings"])
             }
-            filterSelectionViewController.filterUnselected = { [weak self] filter in
+            playlistSelectionViewController.playlistUnselected = { [weak self] playlist in
                 guard let self = self else { return }
 
-                filter.removePodcast(podcastUuid: self.podcast.uuid)
-                DataManager.sharedManager.save(filter: filter)
-                NotificationCenter.postOnMainThread(notification: Constants.Notifications.filterChanged)
+                playlist.removePodcast(podcastUuid: self.podcast.uuid)
+                DataManager.sharedManager.save(playlist: playlist)
+                NotificationCenter.postOnMainThread(notification: Constants.Notifications.playlistChanged)
 
                 Analytics.track(.filterUpdated, properties: ["group": "podcasts", "source": "podcast_settings"])
             }
-            navigationController?.pushViewController(filterSelectionViewController, animated: true)
+            navigationController?.pushViewController(playlistSelectionViewController, animated: true)
         } else if row == .siriShortcut {
             if let voiceShortcut = existingSiriVoiceShortcut() {
                 let viewController = INUIEditVoiceShortcutViewController(voiceShortcut: voiceShortcut)
@@ -325,7 +335,8 @@ extension PodcastSettingsViewController: UITableViewDataSource, UITableViewDeleg
     }
 
     private func setUpNext(_ setting: AutoAddToUpNextSetting) {
-        podcast.autoAddToUpNext = setting.rawValue
+        podcast.setAutoAddToUpNext(setting: setting)
+        podcast.syncStatus = SyncStatus.notSynced.rawValue
         DataManager.sharedManager.save(podcast: podcast)
         settingsTable.reloadData()
 
@@ -349,9 +360,9 @@ extension PodcastSettingsViewController: UITableViewDataSource, UITableViewDeleg
 
     @objc private func addToUpNextChanged(_ sender: UISwitch) {
         if sender.isOn {
-            podcast.autoAddToUpNext = AutoAddToUpNextSetting.addLast.rawValue
+            podcast.setAutoAddToUpNext(setting: .addLast)
         } else {
-            podcast.autoAddToUpNext = AutoAddToUpNextSetting.off.rawValue
+            podcast.setAutoAddToUpNext(setting: .off)
         }
 
         settingsTable.reloadData()
@@ -360,9 +371,19 @@ extension PodcastSettingsViewController: UITableViewDataSource, UITableViewDeleg
     }
 
     @objc private func notificationChanged(_ sender: UISwitch) {
-        PodcastManager.shared.setNotificationsEnabled(podcast: podcast, enabled: sender.isOn)
-        NotificationCenter.postOnMainThread(notification: Constants.Notifications.podcastUpdated, object: podcast.uuid)
         Analytics.track(.podcastSettingsNotificationsToggled, properties: ["enabled": sender.isOn])
+        NotificationsHelper.shared.registerForPushNotifications() { [weak self] granted in
+            guard let self, granted || !sender.isOn else {
+                Toast.show(L10n.notificationsPermissionsNeedsAction, actions: [.init(title: L10n.notificationsPermissionsOpenSettings, action: {
+                    Analytics.track(.notificationsPermissionsOpenSystemSettings)
+                    UIApplication.shared.openNotificationSettings()
+                })])
+                sender.isOn = false
+                return
+            }
+            PodcastManager.shared.setNotificationsEnabled(podcast: self.podcast, enabled: sender.isOn)
+            NotificationCenter.postOnMainThread(notification: Constants.Notifications.podcastUpdated, object: podcast.uuid)
+        }
     }
 
     private func tableData() -> [[TableRow]] {
@@ -377,7 +398,7 @@ extension PodcastSettingsViewController: UITableViewDataSource, UITableViewDeleg
             data[1].append(.globalUpNext)
         }
 
-        if filtersPodcastCanAppearIn().count > 0 {
+        if playlistsPodcastCanAppearIn().count > 0 {
             data.append([.inFilters])
         }
         data.append([.siriShortcut])
@@ -386,15 +407,15 @@ extension PodcastSettingsViewController: UITableViewDataSource, UITableViewDeleg
         return data
     }
 
-    private func filterUuidsPodcastAppearsIn() -> [String] {
-        DataManager.sharedManager.allFilters(includeDeleted: false).compactMap { filter -> String? in
-            filter.podcastUuids.contains(podcast.uuid) ? filter.uuid : nil
+    private func playlistUuidsPodcastAppearsIn() -> [String] {
+        DataManager.sharedManager.allSmartPlaylists(includeDeleted: false).compactMap { playlist -> String? in
+            playlist.podcastUuids.contains(podcast.uuid) ? playlist.uuid : nil
         }
     }
 
-    private func filtersPodcastCanAppearIn() -> [EpisodeFilter] {
-        DataManager.sharedManager.allFilters(includeDeleted: false).filter { filter -> Bool in
-            filter.filterAllPodcasts == false
+    private func playlistsPodcastCanAppearIn() -> [EpisodeFilter] {
+        DataManager.sharedManager.allSmartPlaylists(includeDeleted: false).filter { playlist -> Bool in
+            playlist.filterAllPodcasts == false
         }
     }
 

@@ -35,12 +35,14 @@ struct EpisodeLoadingView: View {
 class EpisodeLoadingController: UIHostingController<AnyView> {
     private let episodeUuid: String
     private let podcastUuid: String
+    private let timestamp: TimeInterval?
 
     private let episodeLoadingModel = EpisodeLoadingModel()
 
-    init(episodeUuid: String, podcastUuid: String) {
+    init(episodeUuid: String, podcastUuid: String, timestamp: TimeInterval? = nil) {
         self.episodeUuid = episodeUuid
         self.podcastUuid = podcastUuid
+        self.timestamp = timestamp
 
         super.init(rootView: AnyView(EpisodeLoadingView(episodeLoadingModel: episodeLoadingModel).setupDefaultEnvironment()))
     }
@@ -91,47 +93,25 @@ class EpisodeLoadingController: UIHostingController<AnyView> {
     }
 
     @MainActor func doneLoading() {
-        // Push to the controller and fade into it
-        let controller = EpisodeDetailViewController(episodeUuid: episodeUuid, source: .homeScreenWidget)
+        transitionToEpisodeControllerFadingIntoIt()
+    }
 
-        navigationController?.delegate = self
-        navigationController?.setViewControllers([controller], animated: true)
+    private func transitionToEpisodeControllerFadingIntoIt() {
+        let controller = EpisodeDetailViewController(episodeUuid: episodeUuid, source: .homeScreenWidget, timestamp: timestamp)
+
+        view.addSubview(controller.view)
+        controller.view.alpha = 0
+        controller.view.translatesAutoresizingMaskIntoConstraints = false
+        controller.view.anchorToAllSidesOf(view: view)
+        addChild(controller)
+        controller.didMove(toParent: self)
+
+        UIView.animate(withDuration: 0.2) {
+            controller.view.alpha = 1
+        }
     }
 
     @MainActor required dynamic init?(coder aDecoder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
-    }
-}
-
-/// This is a bit of a hack to make it appear like the loading view is an overlay of the episode controller,
-/// but in reality it's in a navigation controller and we're pushing to it
-extension EpisodeLoadingController: UIViewControllerAnimatedTransitioning, UINavigationControllerDelegate {
-    func navigationController(_ navigationController: UINavigationController, animationControllerFor operation: UINavigationController.Operation, from fromVC: UIViewController, to toVC: UIViewController) -> UIViewControllerAnimatedTransitioning? {
-        self
-    }
-
-    func transitionDuration(using transitionContext: UIViewControllerContextTransitioning?) -> TimeInterval {
-        return 0.2
-    }
-
-    func animateTransition(using transitionContext: UIViewControllerContextTransitioning) {
-        let fromView = transitionContext.viewController(forKey: UITransitionContextViewControllerKey.from)
-        let toView = transitionContext.viewController(forKey: UITransitionContextViewControllerKey.to)
-
-        guard let fromView, let toView else {
-            return
-        }
-
-        // Add the episode controller below the loading view so we can fade into it
-        transitionContext.containerView.insertSubview(toView.view, belowSubview: fromView.view)
-
-        let duration = transitionDuration(using: transitionContext)
-
-        // We delay the alpha transition here because the episode controller has a weird animation effect when it first loads
-        UIView.animate(withDuration: duration, delay: 0.3) {
-            fromView.view.alpha = 0
-        } completion: { _ in
-            transitionContext.completeTransition(true)
-        }
     }
 }

@@ -1,5 +1,7 @@
 import Foundation
 import PocketCastsDataModel
+import PocketCastsUtils
+import UIKit
 
 extension PlayerContainerViewController {
     func updateColors() {
@@ -18,6 +20,7 @@ extension PlayerContainerViewController {
     }
 
     private func updateAvailableTabs() {
+        #if !APPCLIP
         guard let playingEpisode = PlaybackManager.shared.currentEpisode() else { return }
 
         // Update the colors when the episode changes
@@ -25,7 +28,7 @@ extension PlayerContainerViewController {
 
         let shouldShowNotes = (playingEpisode is Episode)
         let shouldShowChapters = PlaybackManager.shared.chapterCount() > 0
-        let shouldShowBookmarks = FeatureFlag.bookmarks.enabled
+        let shouldShowBookmarks = true
 
         // check to see if the visible views are already configured correctly
         if shouldShowNotes == showingNotes,
@@ -72,6 +75,7 @@ extension PlayerContainerViewController {
 
             addTab(bookmarksItem, previousTab: &previousTab)
         }
+        #endif
     }
 
     private func addTab(_ tab: PlayerItemViewController, previousTab: inout PlayerItemViewController) {

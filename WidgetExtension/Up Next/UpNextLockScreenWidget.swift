@@ -3,20 +3,15 @@ import WidgetKit
 
 struct UpNextLockScreenWidget: Widget {
     var body: some WidgetConfiguration {
-        if #available(iOSApplicationExtension 16.0, *) {
-            return StaticConfiguration(kind: "Up_Next_Lock_Screen_Widget", provider: UpNextProvider()) { entry in
-                UpNextLockScreenWidgetEntryView(entry: entry)
-            }
-            .configurationDisplayName(L10n.upNext)
-            .description(L10n.widgetsUpNextDescription)
-            .supportedFamilies([.accessoryCircular, .accessoryRectangular])
-        } else {
-            return EmptyWidgetConfiguration()
+        return StaticConfiguration(kind: "Up_Next_Lock_Screen_Widget", provider: UpNextProvider()) { entry in
+            UpNextLockScreenWidgetEntryView(entry: entry)
         }
+        .configurationDisplayName(L10n.upNext)
+        .description(L10n.widgetsUpNextDescription)
+        .supportedFamilies([.accessoryCircular, .accessoryRectangular])
     }
 }
 
-@available(iOS 16.0, *)
 struct UpNextLockScreenWidgetEntryView: View {
     @State var entry: UpNextProvider.Entry
     @Environment(\.widgetFamily) private var family
@@ -46,7 +41,7 @@ struct UpNextCircularWidgetView: View {
     }
 
     var widgetURL: String {
-        return numberOfEpisodeInUpNext != 0 ? "pktc://upnext?source=lock_screen_widget" : "pktc://discover"
+        return numberOfEpisodeInUpNext != 0 ? "pktc://upnext?source=lock_screen_widget" : "pktc://discover?source=widget"
     }
 
     var font: Font {
@@ -100,7 +95,7 @@ struct UpNextRectangularWidgetView: View {
     }
 
     var widgetURL: String {
-        return nextEpisode != nil ? "pktc://upnext?source=lock_screen_widget" : "pktc://discover"
+        return nextEpisode != nil ? "pktc://upnext?source=lock_screen_widget" : "pktc://discover?source=widget"
     }
 
     var body: some View {

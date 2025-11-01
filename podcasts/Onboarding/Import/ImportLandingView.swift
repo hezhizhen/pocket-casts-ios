@@ -9,14 +9,14 @@ struct ImportLandingView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     Text(L10n.importTitle)
                         .font(size: 31, style: .largeTitle, weight: .bold, maxSizeCategory: .extraExtraExtraLarge)
-                        .foregroundColor(AppTheme.color(for: .primaryText01, theme: theme))
+                        .foregroundColor(theme.primaryText01)
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.bottom, viewModel.showSubtitle ? 0 : 32)
 
                     if viewModel.showSubtitle {
                         Text(L10n.importSubtitle)
                             .font(size: 18, style: .body, weight: .medium, maxSizeCategory: .extraExtraExtraLarge)
-                            .foregroundColor(AppTheme.color(for: .primaryText02, theme: theme))
+                            .foregroundColor(theme.primaryText02)
                             .fixedSize(horizontal: false, vertical: true)
                             .padding(.top, 10)
                             .padding(.bottom, 32)
@@ -24,16 +24,19 @@ struct ImportLandingView: View {
 
                     VStack(alignment: .leading, spacing: 16) {
                         ForEach(viewModel.availableSources) { importSource in
-                            ImportSourceRow(importSource: importSource) {
-                                viewModel.didSelect(importSource)
+                            NavigationLink(
+                                destination: ImportDetailsView(importSource: importSource, viewModel: viewModel).environmentObject(theme)
+                            ) {
+                                ImportSourceRowContent(importSource: importSource)
                             }
+                            .buttonStyle(PlainButtonStyle())
                         }
                     }
 
                     Spacer()
                 }.padding([.leading, .trailing], 24)
             }.padding(.top, 16).padding(.bottom)
-                .background(AppTheme.color(for: .primaryUi01, theme: theme).ignoresSafeArea())
+                .background(theme.primaryUi01.ignoresSafeArea())
     }
 }
 
@@ -51,30 +54,39 @@ private struct ImportSourceRow: View {
         Button {
             action()
         } label: {
-            HStack(spacing: 12) {
-                Image(importSource.iconName)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 56, height: 56)
-                    .cornerRadius(16)
-                    .shadow(color: .black.opacity(0.2), radius: 3, x: 0, y: 1)
-
-                Text(L10n.importInstructionsImportFrom(importSource.displayName))
-                    .multilineTextAlignment(.leading)
-                    .foregroundColor(AppTheme.color(for: .primaryText01, theme: theme))
-                    .fixedSize(horizontal: false, vertical: true)
-                    .font(style: .subheadline, weight: .medium, maxSizeCategory: .extraExtraExtraLarge)
-
-                Spacer()
-
-                Image(systemName: "chevron.right")
-                    .frame(minHeight: 14)
-                    .font(style: .subheadline, weight: .medium, maxSizeCategory: .extraExtraExtraLarge)
-                    .foregroundColor(AppTheme.color(for: .primaryIcon02, theme: theme))
-            }
-            .contentShape(Rectangle())
+            ImportSourceRowContent(importSource: importSource)
         }
         .buttonStyle(ClickyButton())
+    }
+}
+
+private struct ImportSourceRowContent: View {
+    @EnvironmentObject var theme: Theme
+    let importSource: ImportViewModel.ImportSource
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(importSource.iconName)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 56, height: 56)
+                .cornerRadius(16)
+                .shadow(color: .black.opacity(0.2), radius: 3, x: 0, y: 1)
+
+            Text(L10n.importInstructionsImportFrom(importSource.displayName))
+                .multilineTextAlignment(.leading)
+                .foregroundColor(theme.primaryText01)
+                .fixedSize(horizontal: false, vertical: true)
+                .font(style: .subheadline, weight: .medium, maxSizeCategory: .extraExtraExtraLarge)
+
+            Spacer()
+
+            Image(systemName: "chevron.right")
+                .frame(minHeight: 14)
+                .font(style: .subheadline, weight: .medium, maxSizeCategory: .extraExtraExtraLarge)
+                .foregroundColor(AppTheme.color(for: .primaryIcon02, theme: theme))
+        }
+        .contentShape(Rectangle())
     }
 }
 

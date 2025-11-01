@@ -2,14 +2,13 @@
 
 source 'https://rubygems.org'
 
-gem 'cocoapods', '~> 1.12', '>= 1.12.1'
-gem 'cocoapods-check', '~> 1.1'
 gem 'commonmarker'
-gem 'danger-dangermattic', git: 'https://github.com/Automattic/dangermattic'
+gem 'danger-dangermattic', '~> 1.0'
 gem 'fastlane', '~> 2.216'
+gem 'fastlane-plugin-firebase_app_distribution', '~> 0.10'
 gem 'fastlane-plugin-sentry', '~> 1.14'
-gem 'fastlane-plugin-wpmreleasetoolkit', '~> 9.1'
-gem 'rubocop', '~> 1.57'
+gem 'fastlane-plugin-wpmreleasetoolkit', '~> 13.0'
+gem 'rubocop', '~> 1.60'
 gem 'watchbuild'
 
 # At some point, the Rake gem end up at version 13.x. At the time of writing,

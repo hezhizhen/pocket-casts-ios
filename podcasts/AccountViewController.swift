@@ -3,11 +3,13 @@ import PocketCastsUtils
 import UIKit
 
 class AccountViewController: UIViewController, ChangeEmailDelegate {
-    enum TableRow { case upgradeView, changeEmail, changePassword, upgradeAccount, newsletter, cancelSubscription, logout, deleteAccount, privacyPolicy, termsOfUse, supporterContributions }
+    enum TableRow { case upgradeView, changeAvatar, changeEmail, changePassword, upgradeAccount, newsletter, cancelSubscription, logout, deleteAccount, privacyPolicy, termsOfUse, supporterContributions }
     var tableData: [[TableRow]] = [[.changeEmail, .changePassword, .newsletter], [.privacyPolicy, .termsOfUse], [.logout], [.deleteAccount]]
 
     static let newsletterCellId = "NewsletterCellId"
     static let actionCellId = "AccountActionCellId"
+
+    let model = PlusAccountPromptViewModel()
 
     private var isUsernamePasswordLogin: Bool {
         ServerSettings.syncingPassword() != nil
@@ -18,7 +20,6 @@ class AccountViewController: UIViewController, ChangeEmailDelegate {
             tableView.applyInsetForMiniPlayer()
             tableView.register(UINib(nibName: "NewsletterCell", bundle: nil), forCellReuseIdentifier: AccountViewController.newsletterCellId)
             tableView.register(UINib(nibName: "AccountActionCell", bundle: nil), forCellReuseIdentifier: AccountViewController.actionCellId)
-            tableView.register(PlusAccountPromptTableCell.self, forCellReuseIdentifier: PlusAccountPromptTableCell.reuseIdentifier)
         }
     }
 
@@ -32,6 +33,7 @@ class AccountViewController: UIViewController, ChangeEmailDelegate {
         let viewModel = AccountHeaderViewModel()
 
         viewModel.viewContentSizeChanged = { [weak self] in
+            self?.updatedHeaderContentView.frame = .init(x: 0, y: 0, width: self?.headerViewModel.contentSize?.width ?? 0, height: self?.headerViewModel.contentSize?.height ?? 0)
             self?.tableView.reloadData()
         }
 
@@ -42,7 +44,12 @@ class AccountViewController: UIViewController, ChangeEmailDelegate {
         let headerView = AccountHeaderView(viewModel: headerViewModel)
 
         let view = headerView.themedUIView
-        view.backgroundColor = .clear
+        if FeatureFlag.newOnboardingUpgrade.enabled {
+            view.backgroundColor = AppTheme.colorForStyle(.primaryUi03, themeOverride: nil)
+            self.tableView.themeStyle =  ThemeStyle.primaryUi03
+        } else {
+            view.backgroundColor = .clear
+        }
 
         return view
     }()
@@ -68,6 +75,9 @@ class AccountViewController: UIViewController, ChangeEmailDelegate {
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
         title = ""
+        if FeatureFlag.newAccountUpgradePromptFlow.enabled {
+            OnboardingFlow.shared.reset()
+        }
     }
 
     deinit {
@@ -94,7 +104,7 @@ class AccountViewController: UIViewController, ChangeEmailDelegate {
 
         // Show the 'Upgrade Account' if the user has an active subscription that isn't patron.
         // Hide the cell if we're already showing the big upgrade prompt
-        let upgradeRow = (FeatureFlag.patron.enabled && SubscriptionHelper.activeTier == .plus && !isExpiring) ? TableRow.upgradeAccount : nil
+        let upgradeRow = (SubscriptionHelper.activeTier == .plus && !isExpiring) ? TableRow.upgradeAccount : nil
 
         // Only accounts created with username/password can change email/password
         var accountOptions: [TableRow]
@@ -103,11 +113,13 @@ class AccountViewController: UIViewController, ChangeEmailDelegate {
         } else {
             accountOptions = [upgradeRow, .newsletter].compactMap { $0 }
         }
-
+        if headerViewModel.profile.isLoggedIn {
+            accountOptions.insert(.changeAvatar, safelyAt: 0)
+        }
         if SubscriptionHelper.hasActiveSubscription() {
             var newTableRows: [[TableRow]] = [accountOptions, [.privacyPolicy, .termsOfUse], [.logout], [.deleteAccount]]
 
-            if SubscriptionHelper.activeSubscriptionType != .none {
+            if SubscriptionHelper.hasRenewingSubscription() {
                 newTableRows[0].append(.cancelSubscription)
             }
 

@@ -1,7 +1,7 @@
 import PocketCastsServer
 import UIKit
 
-class AppearanceViewController: SimpleNotificationsViewController, UITableViewDataSource, UITableViewDelegate, IconSelectorCellDelegate {
+class AppearanceViewController: PCViewController, UITableViewDataSource, UITableViewDelegate, IconSelectorCellDelegate {
     private let switchCellId = "SwitchCell"
     private let disclosureCellId = "DisclosureCell"
     private let buttonCellId = "ButtonCell"
@@ -22,7 +22,6 @@ class AppearanceViewController: SimpleNotificationsViewController, UITableViewDa
             settingsTable.register(UINib(nibName: "ButtonCell", bundle: nil), forCellReuseIdentifier: buttonCellId)
             settingsTable.register(UINib(nibName: "IconSelectorCell", bundle: nil), forCellReuseIdentifier: iconSelectorCellId)
             settingsTable.register(UINib(nibName: "PlusLockedInfoCell", bundle: nil), forCellReuseIdentifier: plusLockedInfoCellId)
-            settingsTable.applyInsetForMiniPlayer()
         }
     }
 
@@ -32,23 +31,16 @@ class AppearanceViewController: SimpleNotificationsViewController, UITableViewDa
         title = L10n.settingsAppearance
         updateTableAndData()
         addCustomObserver(ServerNotifications.subscriptionStatusChanged, selector: #selector(subscriptionStatusChanged))
-
+        insetAdjuster.setupInsetAdjustmentsForMiniPlayer(scrollView: settingsTable)
         Analytics.track(.settingsAppearanceShown)
     }
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
 
-        NotificationCenter.default.addObserver(self, selector: #selector(themeDidChange), name: Constants.Notifications.themeChanged, object: nil)
         if let appSection = tableData.firstIndex(of: [.appIcon]), let iconSelectorCell = settingsTable.cellForRow(at: IndexPath(item: 0, section: appSection)) as? IconSelectorCell {
             iconSelectorCell.scrollToSelected()
         }
-    }
-
-    override func viewWillDisappear(_ animated: Bool) {
-        super.viewWillDisappear(animated)
-
-        NotificationCenter.default.removeObserver(self, name: Constants.Notifications.themeChanged, object: nil)
     }
 
     deinit {
@@ -63,11 +55,7 @@ class AppearanceViewController: SimpleNotificationsViewController, UITableViewDa
         }
     }
 
-    override func viewDidDisappear(_ animated: Bool) {
-        super.viewDidDisappear(animated)
-    }
-
-    @objc private func themeDidChange() {
+    override func handleThemeChanged() {
         updateTableAndData()
     }
 
@@ -142,7 +130,7 @@ class AppearanceViewController: SimpleNotificationsViewController, UITableViewDa
         case .embeddedArtwork:
             let cell = tableView.dequeueReusableCell(withIdentifier: switchCellId, for: indexPath) as! SwitchCell
             cell.cellLabel.text = L10n.appearanceEmbeddedArtwork
-            cell.cellSwitch.isOn = UserDefaults.standard.bool(forKey: Constants.UserDefaults.loadEmbeddedImages)
+            cell.cellSwitch.isOn = Settings.loadEmbeddedImages
 
             cell.cellSwitch.removeTarget(self, action: nil, for: UIControl.Event.valueChanged)
             cell.cellSwitch.addTarget(self, action: #selector(loadEmbeddedArtToggled(_:)), for: UIControl.Event.valueChanged)
@@ -174,7 +162,7 @@ class AppearanceViewController: SimpleNotificationsViewController, UITableViewDa
         }
     }
 
-    private func presentThemePicker(selectedTheme: Theme.ThemeType, persistThemeChange: @escaping (Theme.ThemeType) -> Void) {
+    func presentThemePicker(selectedTheme: Theme.ThemeType, persistThemeChange: @escaping (Theme.ThemeType) -> Void) {
         let themeSelector = ThemeSelectorView(title: L10n.appearanceThemeSelect, onThemeSelected: { [weak self] theme in
             guard let self = self else { return }
 
@@ -262,8 +250,7 @@ class AppearanceViewController: SimpleNotificationsViewController, UITableViewDa
     }
 
     @objc private func loadEmbeddedArtToggled(_ sender: UISwitch) {
-        UserDefaults.standard.set(sender.isOn, forKey: Constants.UserDefaults.loadEmbeddedImages)
-        Settings.trackValueToggled(.settingsAppearanceUseEmbeddedArtworkToggled, enabled: sender.isOn)
+        Settings.loadEmbeddedImages = sender.isOn
     }
 
     private func updateTableAndData() {

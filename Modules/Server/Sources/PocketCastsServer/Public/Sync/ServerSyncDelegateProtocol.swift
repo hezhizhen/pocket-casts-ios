@@ -10,13 +10,14 @@ public protocol ServerSyncDelegate {
 
     func subscribedToPodcast()
 
-    func filterChanged()
+    func playlistChanged()
 
     func episodeStarredChanged(episode: Episode)
     func archiveEpisodeExternal(episode: Episode)
     func markEpisodeAsPlayedExternal(episode: Episode)
+    func deselectedChaptersChanged()
     func episodeCanBeCleanedUp(episode: Episode) -> Bool
-    func autoDownloadLatestEpisode(episode: Episode)
+    func autoDownloadLatestEpisodes(uuids: [String])
     func cleanupAllUnusedEpisodeBuffers()
 
     func deleteFromDevice(userEpisode: UserEpisode)

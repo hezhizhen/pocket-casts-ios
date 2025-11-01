@@ -183,6 +183,7 @@ class AddCustomViewController: PCViewController, UITextFieldDelegate {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        Analytics.track(.userFileEditShown)
         if let mainView = view as? ThemeableView {
             mainView.style = .primaryUi04
         }
@@ -219,7 +220,8 @@ class AddCustomViewController: PCViewController, UITextFieldDelegate {
                 showError(message: L10n.fileUploadSupportError)
                 return
             }
-            if let newFileLocation = DownloadManager.shared.addLocalFile(url: fileUrl, uuid: uuid) {
+            do {
+                let newFileLocation = try DownloadManager.shared.addLocalFile(url: fileUrl, uuid: uuid)
                 destinationUrl = newFileLocation
                 title = L10n.fileUploadAddFile
                 errorView.isHidden = true
@@ -232,7 +234,7 @@ class AddCustomViewController: PCViewController, UITextFieldDelegate {
                 setupFileDetails()
                 imageSaveErrorLabel.isHidden = true
                 setupScrollViewOffset()
-            } else {
+            } catch let error {
                 showError(message: L10n.pleaseTryAgain) // TODO: update error meessage
             }
         }
@@ -317,6 +319,7 @@ class AddCustomViewController: PCViewController, UITextFieldDelegate {
     // MARK: Actions
 
     @IBAction func cancelTapped() {
+        Analytics.track(.userFileEditDismissed)
         navigationController?.navigationBar.isHidden = false
         if episodeToEdit == nil {
             if let destinationUrl = destinationUrl {
@@ -329,6 +332,7 @@ class AddCustomViewController: PCViewController, UITextFieldDelegate {
     }
 
     @objc func saveTapped() {
+        Analytics.track(.userFileEditSave)
         nameTextfield.resignFirstResponder()
         nameTextfield.isHidden = true
         imageSaveErrorLabel.isHidden = true
@@ -370,7 +374,7 @@ class AddCustomViewController: PCViewController, UITextFieldDelegate {
             return
         }
 
-        if artwork == nil { // add imgage
+        if artwork == nil { // add image
             // Check permissions and add the actions
             switch AVCaptureDevice.authorizationStatus(for: .video) {
             case .authorized:

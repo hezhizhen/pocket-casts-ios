@@ -16,6 +16,7 @@ class EpisodeManager: NSObject {
 
         DataManager.sharedManager.saveEpisode(playingStatus: .completed, episode: episode, updateSyncFlag: SyncManager.isUserLoggedIn())
 
+        #if !APPCLIP
         if shouldArchiveOnCompletion(episode: episode) {
             if let episode = episode as? Episode {
                 archiveEpisode(episode: episode, fireNotification: false, userInitiated: false)
@@ -28,6 +29,7 @@ class EpisodeManager: NSObject {
                 }
             }
         }
+        #endif
 
         if fireNotification {
             NotificationCenter.postOnMainThread(notification: Constants.Notifications.episodePlayStatusChanged, object: episode.uuid)
@@ -81,6 +83,7 @@ class EpisodeManager: NSObject {
         if userEpisodeToMarkAsPlayed.count > 0 {
             DataManager.sharedManager.bulkMarkAsPlayed(episodes: userEpisodeToMarkAsPlayed, updateSyncFlag: updateSyncFlag)
 
+            #if !APPCLIP
             userEpisodeToMarkAsPlayed.forEach { userEpisode in
                 // Do this last as it may delete the episode from the database
                 if Settings.userEpisodeRemoveFileAfterPlaying() {
@@ -90,6 +93,7 @@ class EpisodeManager: NSObject {
                     UserEpisodeManager.deleteFromCloud(episode: userEpisode, removeFromPlaybackQueue: false)
                 }
             }
+            #endif
         }
         if let currentEpisode = currentEpisodeToMarkAsPlayed {
             markAsPlayed(episode: currentEpisode, fireNotification: true, userInitiated: false)
@@ -154,7 +158,7 @@ class EpisodeManager: NSObject {
     }
 
     class func archiveEpisode(episode: Episode, fireNotification: Bool, removeFromPlayer: Bool = true, userInitiated: Bool = true) {
-        FileLog.shared.addMessage("Archive episode \(episode.displayableTitle()), fireNotification? \(fireNotification), removeFromPlayer? \(removeFromPlayer)")
+        FileLog.shared.addMessage("Archive episode \(episode.displayableTitle()), fireNotification? \(fireNotification), removeFromPlayer? \(removeFromPlayer) userInitiated? \(userInitiated)")
         // request to remove it from the download queue, just in case it's in there
         DownloadManager.shared.removeFromQueue(episodeUuid: episode.uuid, fireNotification: fireNotification, userInitiated: true)
 
@@ -211,7 +215,7 @@ class EpisodeManager: NSObject {
 
         // if this podcast has an episode limit, flag this episode as being manually excluded from that limit
         if let parentPodcast = episode.parentPodcast() {
-            if parentPodcast.autoArchiveEpisodeLimit > 0 {
+            if parentPodcast.autoArchivePlayedAfterTime > 0 {
                 DataManager.sharedManager.saveEpisode(excludeFromEpisodeLimit: true, episode: episode)
             }
         }
@@ -231,6 +235,14 @@ class EpisodeManager: NSObject {
         NotificationCenter.postOnMainThread(notification: Constants.Notifications.manyEpisodesChanged)
 
         analyticsHelper.bulkUnarchiveEpisodes(count: episodes.count)
+    }
+
+    class func removeListeningHistory(episodes: [BaseEpisode]) {
+        for episode in episodes {
+            DataManager.sharedManager.clearEpisodePlaybackInteractionDate(episodeUuid: episode.uuid)
+        }
+        NotificationCenter.postOnMainThread(notification: Constants.Notifications.listeningHistoryChanged)
+        analyticsHelper.bulkRemoveFromListeningHistory(count: episodes.count)
     }
 
     class func deleteAllEpisodesInPodcast(id: Int64) {
@@ -367,9 +379,17 @@ class EpisodeManager: NSObject {
     }
 
     class func urlForEpisode(_ episode: BaseEpisode, streamingOnly: Bool = false) -> URL? {
-        if episode.downloaded(pathFinder: DownloadManager.shared), !streamingOnly {
-            return URL(fileURLWithPath: episode.pathToDownloadedFile(pathFinder: DownloadManager.shared))
-        } else if let episode = episode as? Episode, let url = episode.downloadUrl {
+        if !streamingOnly {
+            // For local playback, prefer downloaded files
+            if episode.downloaded(pathFinder: DownloadManager.shared) {
+                return URL(fileURLWithPath: episode.pathToDownloadedFile(pathFinder: DownloadManager.shared))
+            } else if let episode = episode as? Episode, episode.streamDownloaded(pathFinder: DownloadManager.shared) {
+                return URL(fileURLWithPath: episode.pathToDownloadedFile(pathFinder: DownloadManager.shared))
+            }
+        }
+
+        // For streaming or when no local files, return remote URL
+        if let episode = episode as? Episode, let url = episode.downloadUrl {
             return URL(string: url)
         } else if let episode = episode as? UserEpisode {
             if let token = ServerSettings.syncingV2Token, episode.uploadStatus != UploadStatus.missing.rawValue {
@@ -381,15 +401,17 @@ class EpisodeManager: NSObject {
     }
 
     class func shouldArchiveOnCompletion(episode: BaseEpisode) -> Bool {
+        #if !APPCLIP
         if let episode = episode as? Episode {
-            if let podcast = episode.parentPodcast(), podcast.overrideGlobalArchive {
-                return podcast.autoArchivePlayedAfter == 0 && (Settings.archiveStarredEpisodes() || !episode.keepEpisode)
+            if let podcast = episode.parentPodcast(), podcast.isAutoArchiveOverridden {
+                return podcast.autoArchivePlayedAfterTime == 0 && (Settings.archiveStarredEpisodes() || !episode.keepEpisode)
             }
 
             return Settings.autoArchivePlayedAfter() == 0 && (Settings.archiveStarredEpisodes() || !episode.keepEpisode)
         } else if let _ = episode as? UserEpisode {
             return Settings.userEpisodeRemoveFileAfterPlaying() || Settings.userEpisodeRemoveFromCloudAfterPlaying()
         }
+        #endif
 
         return false
     }
@@ -412,6 +434,12 @@ class EpisodeManager: NSObject {
         for episode in episodes {
             deleteDownloadedFiles(episode: episode)
         }
+    }
+
+    class func hasDownloadedEpisodes() -> Bool {
+        let query = "episodeStatus == \(DownloadStatus.downloaded.rawValue) LIMIT 1"
+        let list = DataManager.sharedManager.findEpisodesWhere(customWhere: query, arguments: nil)
+        return !list.isEmpty
     }
 
     private class func allDownloadedEpisodes() -> [Episode] {

@@ -1,7 +1,7 @@
 @testable import PocketCastsServer
-import PocketCastsDataModel
-import FMDB
+@testable import PocketCastsDataModel
 import XCTest
+import GRDB
 
 final class SyncTaskTests_BookmarkImport: XCTestCase {
     private var dataManager: DataManager!
@@ -9,8 +9,7 @@ final class SyncTaskTests_BookmarkImport: XCTestCase {
     private var syncTask: SyncTask!
 
     override func setUp() {
-        dataManager = DataManager(dbQueue: FMDatabaseQueue(), shouldCloseQueueAfterSetup: false)
-        dataManager.bookmarksEnabled = true
+        dataManager = DataManager(dbQueue: GRDBQueue(dbPool: try! DatabasePool(path: NSTemporaryDirectory().appending("\(UUID().uuidString).sqlite"))))
         bookmarkManager = dataManager.bookmarks
         syncTask = SyncTask(dataManager: dataManager)
     }
@@ -113,13 +112,6 @@ final class SyncTaskTests_BookmarkImport: XCTestCase {
         syncTask.processServerData(response: .bookmarkResponse(count: count, deletedCount: deletedCount))
 
         XCTAssertEqual(bookmarkManager.allBookmarks().count, count - deletedCount)
-    }
-
-    func testBookmarksArentSyncedIfFeatureFlagIsOff() {
-        dataManager.bookmarksEnabled = false
-        syncTask.processServerData(response: .bookmarkResponse(count: 20, deletedCount: 4))
-
-        XCTAssertEqual(bookmarkManager.allBookmarks().count, 0)
     }
 
     // MARK: - Full Sync

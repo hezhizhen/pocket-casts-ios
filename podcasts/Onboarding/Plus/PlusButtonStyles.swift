@@ -2,19 +2,29 @@ import SwiftUI
 
 struct PlusOpaqueButtonStyle: ButtonStyle {
     let isLoading: Bool
-    let plan: Constants.Plan
+    let plan: Plan
+    let themeOverride: Theme?
 
     private var background: Color {
-        plan == .plus ? Color.plusBackgroundColor2 : Color.patronBackgroundColor
+        if let themeOverride {
+            return themeOverride.primaryInteractive01
+        } else {
+            return plan == .plus ? Color.plusBackgroundColor2 : Color.patronBackgroundColor
+        }
     }
 
     private var foregroundColor: Color {
-        plan == .plus ? .plusButtonFilledTextColor : Color.patronButtonFilledTextColor
+        if let themeOverride {
+            return themeOverride.primaryInteractive02
+        } else {
+            return plan == .plus ? .plusButtonFilledTextColor : Color.patronButtonFilledTextColor
+        }
     }
 
-    init(isLoading: Bool = false, plan: Constants.Plan) {
+    init(isLoading: Bool = false, plan: Plan, themeOverride: Theme? = nil) {
         self.isLoading = isLoading
         self.plan = plan
+        self.themeOverride = themeOverride
     }
 
     func makeBody(configuration: Configuration) -> some View {
@@ -46,7 +56,7 @@ struct PlusOpaqueButtonStyle: ButtonStyle {
 
 struct PlusGradientFilledButtonStyle: ButtonStyle {
     let isLoading: Bool
-    let plan: Constants.Plan
+    let plan: Plan
 
     private var background: any View {
         plan == .plus ? Color.plusGradient : Color.patronBackgroundColor
@@ -56,14 +66,18 @@ struct PlusGradientFilledButtonStyle: ButtonStyle {
         plan == .plus ? .plusButtonFilledTextColor : Color.patronButtonFilledTextColor
     }
 
-    init(isLoading: Bool = false, plan: Constants.Plan) {
+    init(isLoading: Bool = false, plan: Plan) {
         self.isLoading = isLoading
         self.plan = plan
     }
 
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
+        configuration
+            .label
             .applyButtonFont()
+            .multilineTextAlignment(.center)
+            .lineLimit(nil)
+            .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity)
             .padding()
 
@@ -91,7 +105,7 @@ struct PlusGradientFilledButtonStyle: ButtonStyle {
 struct PlusGradientStrokeButton: ButtonStyle {
     let isSelectable: Bool
     let isSelected: Bool
-    let plan: Constants.Plan
+    let plan: Plan
 
     private var foregroundColor: Color {
         plan == .plus ? Color.plusGradientColor1 : Color.patronGradientColor1
@@ -105,7 +119,7 @@ struct PlusGradientStrokeButton: ButtonStyle {
         plan == .plus ? "icon-plus-button-selected" : "icon-patron-button-selected"
     }
 
-    init(isSelectable: Bool = false, plan: Constants.Plan, isSelected: Bool = true) {
+    init(isSelectable: Bool = false, plan: Plan, isSelected: Bool = true) {
         self.isSelectable = isSelectable
         self.plan = plan
         self.isSelected = isSelected
@@ -150,29 +164,29 @@ struct PlusGradientStrokeButton: ButtonStyle {
     }
 }
 
-struct PlusFreeTrialLabel: View {
+struct OfferLabel: View {
     let text: String
-    let plan: Constants.Plan
+    let plan: Plan
     let isSelected: Bool
 
     private var color: LinearGradient {
         plan == .plus ? Color.plusGradient : Color.patronGradient
     }
 
-    init(_ text: String, plan: Constants.Plan, isSelected: Bool = true) {
+    init(_ text: String, plan: Plan, isSelected: Bool = true) {
         self.text = text
         self.plan = plan
         self.isSelected = isSelected
     }
 
     var body: some View {
-        Text(L10n.freeTrialDurationFreeTrial(text.localizedUppercase))
-            .font(size: 12, style: .caption, weight: .semibold, maxSizeCategory: .extraExtraLarge)
+        Text(text.localizedUppercase)
+            .font(size: 12, style: .caption, weight: .semibold, maxSizeCategory: .extraExtraExtraLarge)
             .multilineTextAlignment(.center)
             .padding([.top, .bottom], 4)
             .padding([.leading, .trailing], 13)
             .background(
-                color.cornerRadius(4)
+                color.clipShape(.capsule)
             )
             .foregroundColor(Color.plusButtonFilledTextColor)
             .grayscale(isSelected ? 0 : 1)

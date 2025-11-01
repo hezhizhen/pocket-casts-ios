@@ -9,6 +9,7 @@ public class UserEpisode: NSObject, BaseEpisode {
     @objc public var downloadUrl: String?
     @objc public var episodeStatus = 0 as Int32
     @objc public var fileType: String?
+    @objc public var contentType: String?
     @objc public var playedUpTo: Double = 0
     @objc public var duration: Double = 0
     @objc public var durationModified = 0 as Int64
@@ -31,13 +32,20 @@ public class UserEpisode: NSObject, BaseEpisode {
     @objc public var imageColorModified = 0 as Int64
     @objc public var hasCustomImage = false
     @objc public var hasOnlyUuid = false
+    @objc public var deselectedChapters: String?
+    @objc public var deselectedChaptersModified = 0 as Int64
 
     // UserEpisode's are never archived or starred
     public var archived = false
     public var keepEpisode = false
+    public var wasDeleted = false
 
     public var hasBookmarks: Bool {
         DataManager.sharedManager.bookmarks.bookmarkCount(forEpisode: uuid) > 0
+    }
+
+    public var isUserEpisode: Bool {
+        true
     }
 
     override public init() {}

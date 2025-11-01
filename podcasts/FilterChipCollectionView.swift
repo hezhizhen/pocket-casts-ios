@@ -62,6 +62,7 @@ class FilterChipCollectionView: UICollectionView, UICollectionViewDelegate, UICo
         switch chip {
         case .podcast:
             let filterSettingsVC = PodcastFilterOverlayController(nibName: "PodcastChooserViewController", bundle: nil)
+            filterSettingsVC.analyticsSource = .filters
             filterSettingsVC.filterToEdit = filter
             let navVC = SJUIUtils.navController(for: filterSettingsVC)
             chipActionDelegate?.presentingViewController().present(navVC, animated: true, completion: nil)
@@ -79,10 +80,16 @@ class FilterChipCollectionView: UICollectionView, UICollectionViewDelegate, UICo
             filterSettingsVC.filterToEdit = filter
             chipActionDelegate?.presentingViewController().present(SJUIUtils.navController(for: filterSettingsVC), animated: true, completion: nil)
         case .starred:
-            filter.filterStarred = !filter.filterStarred
-            chipActionDelegate?.starredChipSelected()
-            saveFilterAndNotify()
-            reloadData()
+            if FeatureFlag.playlistsRebranding.enabled {
+                let filterSettingsVC = StarredFilterOverlayController()
+                filterSettingsVC.filterToEdit = filter
+                chipActionDelegate?.presentingViewController().navigationController?.pushViewController(filterSettingsVC, animated: true)
+            } else {
+                filter.filterStarred = !filter.filterStarred
+                chipActionDelegate?.starredChipSelected()
+                saveFilterAndNotify()
+                reloadData()
+            }
         case .duration:
             let durationController = FilterDurationViewController(filter: filter)
             chipActionDelegate?.presentingViewController().present(SJUIUtils.navController(for: durationController), animated: true, completion: nil)
@@ -190,8 +197,8 @@ class FilterChipCollectionView: UICollectionView, UICollectionViewDelegate, UICo
     func saveFilterAndNotify() {
         guard let filter = filter else { return }
         filter.syncStatus = SyncStatus.notSynced.rawValue
-        DataManager.sharedManager.save(filter: filter)
-        NotificationCenter.postOnMainThread(notification: Constants.Notifications.filterChanged, object: filter)
+        DataManager.sharedManager.save(playlist: filter)
+        NotificationCenter.postOnMainThread(notification: Constants.Notifications.playlistChanged, object: filter)
 
         if !filter.isNew {
             Analytics.track(.filterUpdated, properties: ["group": "starred", "source": "filters"])

@@ -1,11 +1,13 @@
 import SwiftUI
 import PocketCastsServer
+import PocketCastsUtils
 
 struct PlusAccountUpgradePrompt: View {
     typealias ProductInfo = PlusPricingInfoModel.PlusProductPricingInfo
 
     @EnvironmentObject var theme: Theme
     @ObservedObject var viewModel: PlusAccountPromptViewModel
+    @Environment(\.sizeCategory) private var sizeCategory
 
     @State private var currentPage = 0
     @State private var waitingToLoad = false
@@ -14,6 +16,14 @@ struct PlusAccountUpgradePrompt: View {
 
     /// Allows UIKit to listen for content size changes
     var contentSizeUpdated: ((CGSize) -> Void)? = nil
+
+    private var vSpacing: CGFloat {
+        max(16.0, 16.0 * ScaleFactorModifier.scaleFactor(for: sizeCategory))
+    }
+
+    private var hSpacing: CGFloat {
+        max(10.0, 10.0 * ScaleFactorModifier.scaleFactor(for: sizeCategory))
+    }
 
     init(viewModel: PlusAccountPromptViewModel, contentSizeUpdated: ((CGSize) -> Void)? = nil) {
         self.viewModel = viewModel
@@ -48,61 +58,33 @@ struct PlusAccountUpgradePrompt: View {
 
     @ViewBuilder
     func card(for product: ProductInfo, geometryProxy: GeometryProxy) -> some View {
-        VStack(spacing: 16) {
+        VStack(spacing: vSpacing) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading) {
-                    SubscriptionBadge(tier: product.identifier.subscriptionTier)
-                        .padding(.bottom, 10)
-
+                    SubscriptionPriceAndOfferView(product: product, mainTextColor: theme.primaryText01, secondaryTextColor: theme.primaryText02)
                     productFeatures[product.identifier].map {
                         ForEach($0) { feature in
-                            HStack(spacing: 10) {
+                            HStack(spacing: hSpacing) {
                                 Image(feature.iconName)
                                     .renderingMode(.template)
                                     .resizable()
                                     .aspectRatio(contentMode: .fit)
+                                    .scaleFactor(for: sizeCategory)
                                     .frame(width: 16)
                                     .foregroundColor(theme.primaryText01)
 
-                                Text(feature.title)
+                                UnderlineLinkTextView(feature.title)
                                     .fixedSize(horizontal: false, vertical: true)
                                     .font(size: 14, style: .subheadline, weight: .medium)
                                     .foregroundColor(theme.primaryText01)
+                                    .tint(theme.primaryText01)
                                     .frame(maxWidth: .infinity, alignment: .leading)
 
                                 Spacer()
-                            }.frame(maxWidth: .infinity)
+                            }
+                            .frame(maxWidth: .infinity)
                         }
                     }
-                }
-
-                Spacer()
-
-                VStack(alignment: .trailing) {
-                    if let freeTrial = product.freeTrialDuration {
-                        HighlightedText(L10n.plusFreeMembershipFormat(freeTrial).localizedLowercase)
-                            .highlight(freeTrial, { _ in
-                                    .init(weight: .bold)
-                            })
-                            .font(style: .title2)
-                            .foregroundColor(theme.primaryText01)
-
-                        HighlightedText(L10n.pricingTermsAfterTrial(product.price))
-                            .highlight(product.rawPrice, { _ in
-                                    .init(weight: .bold)
-                            })
-                            .font(style: .body)
-                            .foregroundColor(theme.primaryText01)
-                    } else {
-                        HighlightedText(product.price)
-                            .highlight(product.rawPrice, { _ in
-                                    .init(weight: .bold)
-                            })
-                            .font(style: .title2)
-                            .foregroundColor(theme.primaryText01)
-                    }
-
-                    Spacer()
                 }
             }
 
@@ -131,23 +113,41 @@ struct PlusAccountUpgradePrompt: View {
         .padding(.vertical, 10)
     }
 
-    private let productFeatures: [Constants.IapProducts: [Feature]] = [
-        .yearly: [
-            .init(iconName: "plus-feature-desktop", title: L10n.plusMarketingDesktopAppsTitle),
-            .init(iconName: "plus-feature-folders", title: L10n.folders),
+    private let productFeatures: [IAPProductID: [Feature]] = [
+        .yearly: ([
+            (FeatureFlag.bannerAdPodcasts.enabled || FeatureFlag.bannerAdPlayer.enabled) ? .init(iconName: "unsubscribe", title: L10n.plusMarketingNoBannerAds) : nil,
+            (FeatureFlag.generatedTranscripts.enabled) ? .init(iconName: "transcript", title: L10n.plusMarketingGeneratedTranscripts) : nil,
+            .init(iconName: "plus-feature-folders", title: L10n.plusMarketingFoldersTitle),
+            .init(iconName: "plus-feature-up-next-shuffle", title: L10n.plusMarketingUpNextShuffle),
+            .init(iconName: "plus-feature-bookmarks", title: L10n.plusMarketingBookmarksTitle),
+            PaidFeature.deselectChapters.tier == .plus ? .init(iconName: "rounded-selected", title: L10n.skipChapters) : nil,
             .init(iconName: "plus-feature-cloud", title: L10n.plusCloudStorageLimit),
             .init(iconName: "plus-feature-watch", title: L10n.plusMarketingWatchPlaybackTitle),
-            .init(iconName: "plus-feature-themes", title: L10n.plusMarketingThemesIconsTitle)
-        ],
+            FeatureFlag.slumber.enabled && FeatureFlag.upgradeExperiment.enabled ? Feature(iconName: "plus-feature-slumber", title: L10n.plusFeatureSlumberNew.newSlumberStudiosWithUrl) : nil,
+            .init(iconName: "plus-feature-themes", title: L10n.plusFeatureThemesIcons),
+            FeatureFlag.slumber.enabled && !FeatureFlag.upgradeExperiment.enabled ? Feature(iconName: "plus-feature-slumber", title: L10n.plusFeatureSlumber.slumberStudiosWithUrl) : nil,
+            libroFmFeature()
+        ]
+            .compactMap { $0 }),
 
         .patronYearly: [
             .init(iconName: "patron-everything", title: L10n.patronFeatureEverythingInPlus),
             .init(iconName: "patron-early-access", title: L10n.patronFeatureEarlyAccess),
+            PaidFeature.deselectChapters.tier == .patron ? .init(iconName: "rounded-selected", title: L10n.skipChapters) : nil,
             .init(iconName: "plus-feature-cloud", title: L10n.patronCloudStorageLimit),
             .init(iconName: "patron-badge", title: L10n.patronFeatureProfileBadge),
-            .init(iconName: "patron-icons", title: L10n.patronFeatureProfileIcons)
+            .init(iconName: "patron-icons", title: L10n.patronFeatureProfileIcons),
+            FeatureFlag.slumber.enabled ? Feature(iconName: "plus-feature-love", title: L10n.plusFeatureGratitude) : nil
         ]
+            .compactMap { $0 }
     ]
+
+    private static func libroFmFeature() -> Feature? {
+        if FeatureFlag.libroFm.enabled {
+            return Feature(iconName: "plus-feature-librofm", title: L10n.plusFeatureLibrofm.libroFmWithURL)
+        }
+        return nil
+    }
 
     // MARK: - Model
     private struct Feature: Identifiable, Hashable {
@@ -158,35 +158,35 @@ struct PlusAccountUpgradePrompt: View {
     }
 }
 
-extension Constants.IapProducts {
+extension IAPProductID {
     var subscriptionTier: SubscriptionTier {
         switch self {
-        case .monthly, .yearly:
+        case .monthly, .yearly, .yearlyReferral:
             return .plus
         case .patronYearly, .patronMonthly:
             return .patron
         }
     }
 
-    var plan: Constants.Plan {
+    var plan: Plan {
         switch self {
-        case .monthly, .yearly:
+        case .monthly, .yearly, .yearlyReferral:
             return .plus
         case .patronYearly, .patronMonthly:
             return .patron
         }
     }
 
-    var frequency: Constants.PlanFrequency {
+    var frequency: PlanFrequency {
         switch self {
         case .monthly, .patronMonthly:
             return .monthly
-        case .yearly, .patronYearly:
+        case .yearly, .patronYearly, .yearlyReferral:
             return .yearly
         }
     }
 
-    var productInfo: Constants.ProductInfo {
+    var productInfo: ProductInfo {
         .init(plan: plan, frequency: frequency)
     }
 }

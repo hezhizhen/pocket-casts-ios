@@ -16,9 +16,7 @@ class EpisodeDetailViewController: FakeNavViewController, UIDocumentInteractionC
     private var tabContainerTrailingAnchor: NSLayoutConstraint? = nil
     private var tabViewModel: EpisodeTabsViewModel? = nil
 
-    private lazy var bookmarksController: BookmarkEpisodeListController? = {
-        guard FeatureFlag.bookmarks.enabled else { return nil }
-
+    private lazy var bookmarksController: BookmarkEpisodeListController = {
         return BookmarkEpisodeListController(episode: episode, themeOverride: themeOverride)
     }()
 
@@ -48,7 +46,10 @@ class EpisodeDetailViewController: FakeNavViewController, UIDocumentInteractionC
 
     @IBOutlet var showNotesHolderView: UIView!
     @IBOutlet var showNotesHolderViewHeight: NSLayoutConstraint!
+    @IBOutlet var showNotesHolderTopAnchor: NSLayoutConstraint!
     @IBOutlet var loadingIndicator: UIActivityIndicatorView!
+    var showNotesWebViewTopConstraint: NSLayoutConstraint?
+    var transcriptExcerpt: UIView?
 
     @IBOutlet var mainScrollView: UIScrollView! {
         didSet {
@@ -125,6 +126,7 @@ class EpisodeDetailViewController: FakeNavViewController, UIDocumentInteractionC
 
     var episode: Episode
     var podcast: Podcast
+    var timestamp: TimeInterval?
 
     let viewSource: EpisodeDetailViewSource
 
@@ -134,13 +136,13 @@ class EpisodeDetailViewController: FakeNavViewController, UIDocumentInteractionC
 
     // MARK: - Init
 
-    init(episodeUuid: String, source: EpisodeDetailViewSource, playlist: AutoplayHelper.Playlist? = nil) {
+    init(episodeUuid: String, source: EpisodeDetailViewSource, playlist: AutoplayHelper.Playlist? = nil, timestamp: TimeInterval? = nil) {
         // it's ok to crash here, an episode card with no episode or podcast is invalid
         episode = DataManager.sharedManager.findEpisode(uuid: episodeUuid)!
         podcast = DataManager.sharedManager.findPodcast(uuid: episode.podcastUuid, includeUnsubscribed: true)!
         viewSource = source
         fromPlaylist = playlist
-
+        self.timestamp = timestamp
         super.init(nibName: "EpisodeDetailViewController", bundle: nil)
     }
 
@@ -218,7 +220,7 @@ class EpisodeDetailViewController: FakeNavViewController, UIDocumentInteractionC
 
         loadShowNotes()
 
-        bookmarksController?.view.isHidden = false
+        bookmarksController.view.isHidden = false
 
         addCustomObserver(Constants.Notifications.playbackStarted, selector: #selector(playbackEventDidFire))
         addCustomObserver(Constants.Notifications.playbackPaused, selector: #selector(playbackEventDidFire))
@@ -381,6 +383,7 @@ class EpisodeDetailViewController: FakeNavViewController, UIDocumentInteractionC
         updateButtonStates()
         updateProgress()
         updateMessageView()
+        updateColors()
     }
 
     @objc private func playbackProgressDidChange() {
@@ -440,7 +443,7 @@ class EpisodeDetailViewController: FakeNavViewController, UIDocumentInteractionC
         }
 
         updateButtonStates()
-        updateNavColors(bgColor: bgColor, titleColor: ThemeColor.secondaryText01(for: themeOverride), buttonColor: actionColor)
+        updateNavColors(bgColor: bgColor, titleColor: ThemeColor.secondaryText01(for: themeOverride), buttonColor: actionColor, buttonBackgroundColor: .clear)
     }
 
     @objc private func starTapped(_ sender: UIButton) {
@@ -450,27 +453,7 @@ class EpisodeDetailViewController: FakeNavViewController, UIDocumentInteractionC
     // MARK: - Sharing
 
     @objc private func shareTapped(_ sender: UIButton) {
-        let shareOptions = OptionsPicker(title: nil)
-
-        let sourceRect = sender.superview!.convert(sender.frame, to: view)
-        let shareLinkAction = OptionAction(label: L10n.podcastShareEpisode, icon: nil) { [weak self] in
-            self?.shareLinkToEpisode(sharePosition: false, sourceRect: sourceRect)
-        }
-        shareOptions.addAction(action: shareLinkAction)
-
-        let sharePositionAction = OptionAction(label: L10n.shareCurrentPosition, icon: nil) { [weak self] in
-            self?.shareLinkToEpisode(sharePosition: true, sourceRect: sourceRect)
-        }
-        shareOptions.addAction(action: sharePositionAction)
-
-        if episode.downloaded(pathFinder: DownloadManager.shared) {
-            let openFileAction = OptionAction(label: L10n.podcastShareOpenFile, icon: nil) { [weak self] in
-                self?.shareEpisodeFile(sourceRect: sourceRect)
-            }
-            shareOptions.addAction(action: openFileAction)
-        }
-
-        shareOptions.show(statusBarStyle: preferredStatusBarStyle)
+        SharingModal.showModal(episode: episode, from: analyticsSource, in: self)
     }
 
     @objc private func podcastNameTapped() {
@@ -499,12 +482,21 @@ class EpisodeDetailViewController: FakeNavViewController, UIDocumentInteractionC
         let shareTime = sharePosition ? episode.playedUpTo : 0
 
         let type = shareTime == 0 ? "episode" : "current_position"
-        Analytics.track(.podcastShared, properties: ["type": type, "source": analyticsSource])
 
-        SharingHelper.shared.shareLinkTo(episode: episode, shareTime: shareTime, fromController: self, sourceRect: sourceRect, sourceView: view)
+        SharingHelper.shared.shareLinkTo(episode: episode, shareTime: shareTime, fromController: self, sourceRect: sourceRect, sourceView: view, fromSource: analyticsSource, analyticsType: type)
     }
 
-    private func shareEpisodeFile(sourceRect: CGRect) {
+    func episodeFileAction(from sourceRect: CGRect) -> OptionAction? {
+        guard episode.downloaded(pathFinder: DownloadManager.shared) else {
+            return nil
+        }
+        let openFileAction = OptionAction(label: L10n.podcastShareOpenFile, icon: nil) { [weak self] in
+            self?.shareEpisodeFile(sourceRect: sourceRect)
+        }
+        return openFileAction
+    }
+
+    func shareEpisodeFile(sourceRect: CGRect) {
         let fileUrl = URL(fileURLWithPath: episode.pathToDownloadedFile(pathFinder: DownloadManager.shared))
         docController = UIDocumentInteractionController(url: fileUrl)
         docController?.name = episode.displayableTitle()
@@ -578,7 +570,7 @@ private extension EpisodeDetailViewController {
     private func addBookmarksTabIfNeeded() {
         containerScrollView.addPage(mainScrollView)
 
-        guard let bookmarksController, let bookmarksView = bookmarksController.view else {
+        guard let bookmarksView = bookmarksController.view else {
             return
         }
 
@@ -690,7 +682,7 @@ private extension EpisodeDetailViewController {
             starButton = addRightAction(image: UIImage(named: "star_empty"), accessibilityLabel: L10n.starEpisode, action: #selector(starTapped(_:)))
             updateStar()
         case .bookmarks:
-            if bookmarksController?.viewModel.numberOfItems != 0 {
+            if bookmarksController.viewModel.numberOfItems != 0 {
                 addRightAction(image: UIImage(named: "more"),
                                accessibilityLabel: L10n.accessibilityMoreActions,
                                action: #selector(showBookmarksMore(_:)))
@@ -704,7 +696,7 @@ private extension EpisodeDetailViewController {
     }
 
     @objc private func showBookmarksMore(_ sender: UIButton) {
-        bookmarksController?.viewModel.showMoreOptions()
+        bookmarksController.viewModel.showMoreOptions()
     }
 
     func adjustTabContainer() {

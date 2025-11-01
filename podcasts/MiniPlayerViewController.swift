@@ -1,5 +1,7 @@
 import Foundation
 import PocketCastsDataModel
+import PocketCastsServer
+import PocketCastsUtils
 
 class MiniPlayerViewController: SimpleNotificationsViewController {
     enum PlayerOpenState {
@@ -17,7 +19,10 @@ class MiniPlayerViewController: SimpleNotificationsViewController {
     @IBOutlet var playbackProgressView: ProgressLine!
 
     @IBOutlet var podcastArtwork: PodcastImageView!
-    @IBOutlet var mainView: MiniPlayerBackingView!
+    @IBOutlet var mainView: UIView!
+    @IBOutlet var shadowView: UIView!
+
+    @IBOutlet var gradientView: MiniPlayerGradientView!
 
     private var lastEpisodeUuidImageLoaded = ""
     private var lastEpisodeUuidAutoOpened = ""
@@ -37,11 +42,17 @@ class MiniPlayerViewController: SimpleNotificationsViewController {
 
         addGestureRecognizers()
 
-        view.isHidden = true
+        view.isHidden = false
 
+        setupCorners()
         addUINotificationObservers()
         playbackStateDidChange()
         themeChanged()
+    }
+
+    private func setupCorners() {
+        mainView.layer.cornerRadius = MiniPlayerShadowView.Constants.shadowCornerRadius
+        mainView.layer.masksToBounds = true
     }
 
     deinit {
@@ -77,63 +88,19 @@ class MiniPlayerViewController: SimpleNotificationsViewController {
     func aboutToDisplayFullScreenPlayer() {
         guard let rootVC = rootViewController() else { return }
 
-        guard !FeatureFlag.newPlayerTransition.enabled else {
-            if fullScreenPlayer == nil {
-                fullScreenPlayer = PlayerContainerViewController()
-            }
-
-            return
-        }
-
-        let viewSize = rootVC.view.bounds.size
-        let startingYPos = fullScreenPlayer?.view.frame.minY ?? viewSize.height
         if fullScreenPlayer == nil {
             fullScreenPlayer = PlayerContainerViewController()
-            rootVC.addChild(fullScreenPlayer!)
-            rootVC.view.addSubview(fullScreenPlayer!.view)
         }
-
-        fullScreenPlayer?.view.frame = CGRect(x: 0, y: startingYPos, width: viewSize.width, height: viewSize.height)
-
-        // prevent swipe to go back while the player is open
-        rootNavController()?.interactivePopGestureRecognizer?.isEnabled = false
     }
 
     func finishedWithFullScreenPlayer() {
         guard let rootVC = rootViewController() else { return }
 
-        guard !FeatureFlag.newPlayerTransition.enabled else {
-            rootViewController()?.setNeedsStatusBarAppearanceUpdate()
-            rootViewController()?.setNeedsUpdateOfHomeIndicatorAutoHidden()
-
-            fullScreenPlayer?.view.removeFromSuperview()
-            fullScreenPlayer = nil
-
-            // update the mini player on full screen player close
-            playbackStateDidChange()
-            playbackProgressDidChange()
-            return
-        }
-
-        if fullScreenPlayer?.presentedViewController != nil {
-            fullScreenPlayer?.dismiss(animated: false, completion: nil)
-        }
-
-        // there's a bug in iOS where because the player is added as a child controller to the tab bar, the tab bar adds it as a tab
-        // that would be fine, except if we call fullScreenPlayer.removeFromParent() it removes the controller but not the tab, so here we drop it manually
-        // if you ever change this, check that this bug hasn't come back: https://github.com/shiftyjelly/pocketcasts-ios/issues/3338
-        if rootVC.children.count == 5 {
-            rootVC.viewControllers = rootVC.viewControllers?.dropLast()
-        }
-        fullScreenPlayer?.removeFromParent() // still call this in case it has other special handling in it
-
         rootViewController()?.setNeedsStatusBarAppearanceUpdate()
         rootViewController()?.setNeedsUpdateOfHomeIndicatorAutoHidden()
+
         fullScreenPlayer?.view.removeFromSuperview()
         fullScreenPlayer = nil
-
-        // re-enable the disabled swipe back gesture
-        rootNavController()?.interactivePopGestureRecognizer?.isEnabled = true
 
         // update the mini player on full screen player close
         playbackStateDidChange()
@@ -205,7 +172,12 @@ class MiniPlayerViewController: SimpleNotificationsViewController {
         if let episode = PlaybackManager.shared.currentEpisode() {
             setupForEpisode(episode)
             showMiniPlayer()
-            let shouldOpenAutomatically = UserDefaults.standard.bool(forKey: Constants.UserDefaults.openPlayerAutomatically)
+            let shouldOpenAutomatically: Bool
+            if FeatureFlag.newSettingsStorage.enabled {
+                shouldOpenAutomatically = SettingsStore.appSettings.openPlayer
+            } else {
+                shouldOpenAutomatically = UserDefaults.standard.bool(forKey: Constants.UserDefaults.openPlayerAutomatically)
+            }
             if shouldOpenAutomatically || episode.videoPodcast(), lastEpisodeUuidAutoOpened != episode.uuid {
                 lastEpisodeUuidAutoOpened = episode.uuid
 
@@ -281,6 +253,9 @@ class MiniPlayerViewController: SimpleNotificationsViewController {
                 actionColor = AppTheme.userEpisodeColor(number: 1)
             }
         }
+        view.backgroundColor = .clear
+
+        gradientView.colors = [ThemeColor.primaryUi02().withAlphaComponent(0), ThemeColor.primaryUi02()]
 
         let bgColor = ThemeColor.podcastUi02(podcastColor: actionColor)
         mainView.backgroundColor = bgColor

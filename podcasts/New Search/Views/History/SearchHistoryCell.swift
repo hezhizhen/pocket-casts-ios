@@ -36,6 +36,9 @@ struct SearchHistoryCell: View {
                     podcast.navigateTo()
                 } else if let searchTerm = entry.searchTerm {
                     displaySearch.isSearching = true
+                    if searchResults.showLocalResults {
+                        searchResults.searchLocally(term: searchTerm)
+                    }
                     searchResults.search(term: searchTerm)
                     NotificationCenter.postOnMainThread(notification: Constants.Notifications.podcastSearchRequest, object: searchTerm)
                 }
@@ -82,10 +85,12 @@ struct SearchHistoryCell: View {
                             searchAnalyticsHelper.historyItemDeleted(entry)
                         }
                     }) {
-                        Image("close")
+                        ZStack {
+                            Image("close")
+                        }
+                        .frame(width: 56, height: 56)
                     }
                     .buttonStyle(SecondaryButtonStyle())
-                    .frame(width: 48, height: 48)
                 }
                 ThemedDivider()
                     .frame(height: 1)

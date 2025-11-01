@@ -87,7 +87,7 @@ class EpisodeListSearchController: SimpleNotificationsViewController, UISearchBa
 
         searchTextField.backgroundColor = UIColor.clear
         searchTextField.textColor = ThemeColor.primaryText02()
-        searchTextField.attributedPlaceholder = NSAttributedString(string: L10n.search, attributes: [NSAttributedString.Key.foregroundColor: ThemeColor.primaryText02()])
+        searchTextField.attributedPlaceholder = NSAttributedString(string: L10n.searchEpisodes, attributes: [NSAttributedString.Key.foregroundColor: ThemeColor.primaryText02()])
         searchTextField.keyboardAppearance = AppTheme.keyboardAppearance()
         roundedBackgroundView.backgroundColor = ThemeColor.primaryField01()
         searchIcon.tintColor = ThemeColor.primaryIcon02()
@@ -100,11 +100,11 @@ class EpisodeListSearchController: SimpleNotificationsViewController, UISearchBa
 
         let episodeCount = delegate.episodeCount()
         let archivedCount = delegate.archivedEpisodeCount()
-        let hasEpisodeLimit = (podcast.autoArchiveEpisodeLimit > 0 && podcast.overrideGlobalArchive)
+        let hasEpisodeLimit = (podcast.autoArchiveEpisodeLimitCount > 0 && podcast.isAutoArchiveOverridden)
 
         episodeInfoLabel?.text = episodeCount == 1 ? L10n.podcastEpisodeCountSingular : L10n.podcastEpisodeCountPluralFormat(episodeCount.localized())
 
-        limitLabel?.text = L10n.podcastEpisodeLimitCountFormat(podcast.autoArchiveEpisodeLimit.localized())
+        limitLabel?.text = L10n.podcastEpisodeLimitCountFormat(podcast.autoArchiveEpisodeLimitCount.localized())
         archivedInfoLabel?.text = L10n.podcastArchivedCountFormat(archivedCount.localized())
 
         limitLabel?.isHidden = !hasEpisodeLimit
@@ -132,13 +132,23 @@ class EpisodeListSearchController: SimpleNotificationsViewController, UISearchBa
 
         let optionPicker = OptionsPicker(title: nil)
 
+        if delegate.shouldDisplayPodcastFeedReloadButton() {
+            let reloadPodcastFeedAction = OptionAction(label: L10n.podcastFeedReloadButton, icon: "stats_skipping") { [weak self] in
+                guard let self = self else { return }
+                self.podcastDelegate?.reloadPodcastFeed(source: .menu)
+            }
+            optionPicker.addAction(action: reloadPodcastFeedAction)
+        }
+
         let MultiSelectAction = OptionAction(label: L10n.selectEpisodes, icon: "option-multiselect") { [weak self] in
             guard let strongSelf = self else { return }
             strongSelf.podcastDelegate?.enableMultiSelect()
         }
         optionPicker.addAction(action: MultiSelectAction)
 
-        let currentSort = PodcastEpisodeSortOrder(rawValue: podcast.episodeSortOrder)?.description ?? ""
+        let episodeSortOrder = podcast.podcastSortOrder
+
+        let currentSort = episodeSortOrder?.description ?? ""
         let sortAction = OptionAction(label: L10n.sortEpisodes, secondaryLabel: currentSort, icon: "podcastlist_sort") { [weak self] in
             guard let strongSelf = self else { return }
 
@@ -146,7 +156,7 @@ class EpisodeListSearchController: SimpleNotificationsViewController, UISearchBa
         }
         optionPicker.addAction(action: sortAction)
 
-        let currentGroup = PodcastGrouping(rawValue: podcast.episodeGrouping)?.description ?? ""
+        let currentGroup = podcast.podcastGrouping().description
         let groupAction = OptionAction(label: L10n.groupEpisodes, secondaryLabel: currentGroup, icon: "option-group") { [weak self] in
             guard let strongSelf = self else { return }
 
@@ -167,7 +177,7 @@ class EpisodeListSearchController: SimpleNotificationsViewController, UISearchBa
             let confirmPicker = OptionsPicker(title: nil)
             var warningMessage = downloadLimitExceeded ? L10n.bulkDownloadMax : ""
 
-            if NetworkUtils.shared.isConnectedToWifi() {
+            if NetworkUtils.shared.isConnectedToUnexpensiveConnection() {
                 confirmPicker.addDescriptiveActions(title: L10n.downloadAll, message: warningMessage, icon: "filter_downloaded", actions: [downloadAction])
             } else {
                 downloadAction.destructive = true
@@ -175,11 +185,12 @@ class EpisodeListSearchController: SimpleNotificationsViewController, UISearchBa
                 let queueAction = OptionAction(label: L10n.queueForLater, icon: nil) {
                     delegate.queueAllTapped()
                 }
+                queueAction.outline = true
 
                 if !Settings.mobileDataAllowed() {
-                    warningMessage = L10n.downloadDataWarning + "\n" + warningMessage
+                    warningMessage = L10n.downloadDataWarningWithSettingsLink("pktc://settings/storage-and-data") + "\n" + warningMessage
                 }
-                confirmPicker.addDescriptiveActions(title: L10n.notOnWifi, message: warningMessage, icon: "option-alert", actions: [downloadAction, queueAction])
+                confirmPicker.addAttributedDescriptiveActions(title: L10n.notOnWifi, message: warningMessage, icon: "option-alert", actions: [downloadAction, queueAction])
             }
 
             confirmPicker.show(statusBarStyle: self?.preferredStatusBarStyle ?? .default)
@@ -195,7 +206,7 @@ class EpisodeListSearchController: SimpleNotificationsViewController, UISearchBa
                 strongSelf.confirmArchiveAll(episodeCount: unarchivedCount, playedOnly: false)
             }
             optionPicker.addAction(action: archiveAllAction)
-        } else if !(podcast.autoArchiveEpisodeLimit > 0 && podcast.overrideGlobalArchive) {
+        } else if !(podcast.autoArchiveEpisodeLimitCount > 0 && podcast.isAutoArchiveOverridden) {
             // we only show unarchive all for podcasts that haven't set an episode limit
             let unarchiveAllAction = OptionAction(label: L10n.podcastUnarchiveAll, icon: "list_unarchive") { [weak self] in
                 guard let strongSelf = self else { return }
@@ -245,32 +256,16 @@ class EpisodeListSearchController: SimpleNotificationsViewController, UISearchBa
 
         let optionPicker = OptionsPicker(title: L10n.podcastSortOrderTitle)
 
-        let newestToOldestAction = OptionAction(label: PodcastEpisodeSortOrder.newestToOldest.description, selected: podcast.episodeSortOrder == PodcastEpisodeSortOrder.newestToOldest.rawValue) { [weak self] in
-            self?.setSortSetting(.newestToOldest)
-            Analytics.track(.podcastsScreenSortOrderChanged, properties: ["sort_by": PodcastEpisodeSortOrder.newestToOldest])
+        let sortOrder = podcast.podcastSortOrder
+
+        PodcastEpisodeSortOrder.allCases.forEach { order in
+            let newestToOldestAction = OptionAction(label: order.description, selected: sortOrder == order) { [weak self] in
+                self?.setSortSetting(order)
+                Analytics.track(.podcastsScreenSortOrderChanged, properties: ["sort_by": order])
+            }
+
+            optionPicker.addAction(action: newestToOldestAction)
         }
-
-        optionPicker.addAction(action: newestToOldestAction)
-
-        let oldestToNewestAction = OptionAction(label: PodcastEpisodeSortOrder.oldestToNewest.description, selected: podcast.episodeSortOrder == PodcastEpisodeSortOrder.oldestToNewest.rawValue) { [weak self] in
-            self?.setSortSetting(.oldestToNewest)
-            Analytics.track(.podcastsScreenSortOrderChanged, properties: ["sort_by": PodcastEpisodeSortOrder.oldestToNewest])
-        }
-        optionPicker.addAction(action: oldestToNewestAction)
-
-        let shortestToLongestAction = OptionAction(label: PodcastEpisodeSortOrder.shortestToLongest.description, selected: podcast.episodeSortOrder == PodcastEpisodeSortOrder.shortestToLongest.rawValue) { [weak self] in
-            self?.setSortSetting(.shortestToLongest)
-            Analytics.track(.podcastsScreenSortOrderChanged, properties: ["sort_by": PodcastEpisodeSortOrder.shortestToLongest])
-
-        }
-        optionPicker.addAction(action: shortestToLongestAction)
-
-        let longestToShortestAction = OptionAction(label: PodcastEpisodeSortOrder.longestToShortest.description, selected: podcast.episodeSortOrder == PodcastEpisodeSortOrder.longestToShortest.rawValue) { [weak self] in
-            self?.setSortSetting(.longestToShortest)
-            Analytics.track(.podcastsScreenSortOrderChanged, properties: ["sort_by": PodcastEpisodeSortOrder.longestToShortest])
-
-        }
-        optionPicker.addAction(action: longestToShortestAction)
 
         optionPicker.show(statusBarStyle: preferredStatusBarStyle)
     }
@@ -280,35 +275,37 @@ class EpisodeListSearchController: SimpleNotificationsViewController, UISearchBa
 
         let optionPicker = OptionsPicker(title: L10n.podcastGroupOptionsTitle)
 
-        let noneAction = OptionAction(label: L10n.none, selected: podcast.episodeGrouping == PodcastGrouping.none.rawValue) { [weak self] in
+        let episodeGrouping = podcast.podcastGrouping()
+
+        let noneAction = OptionAction(label: L10n.none, selected: episodeGrouping == PodcastGrouping.none) { [weak self] in
             self?.setGroupingSetting(.none)
             Analytics.track(.podcastsScreenEpisodeGroupingChanged, properties: ["value": PodcastGrouping.none])
 
         }
         optionPicker.addAction(action: noneAction)
 
-        let downloadedAction = OptionAction(label: L10n.statusDownloaded, selected: podcast.episodeGrouping == PodcastGrouping.downloaded.rawValue) { [weak self] in
+        let downloadedAction = OptionAction(label: L10n.statusDownloaded, selected: episodeGrouping == PodcastGrouping.downloaded) { [weak self] in
             self?.setGroupingSetting(.downloaded)
             Analytics.track(.podcastsScreenEpisodeGroupingChanged, properties: ["value": PodcastGrouping.downloaded])
 
         }
         optionPicker.addAction(action: downloadedAction)
 
-        let unplayedAction = OptionAction(label: L10n.statusUnplayed, selected: podcast.episodeGrouping == PodcastGrouping.unplayed.rawValue) { [weak self] in
+        let unplayedAction = OptionAction(label: L10n.statusUnplayed, selected: episodeGrouping == PodcastGrouping.unplayed) { [weak self] in
             self?.setGroupingSetting(.unplayed)
             Analytics.track(.podcastsScreenEpisodeGroupingChanged, properties: ["value": PodcastGrouping.unplayed])
 
         }
         optionPicker.addAction(action: unplayedAction)
 
-        let seasonAction = OptionAction(label: L10n.season, selected: podcast.episodeGrouping == PodcastGrouping.season.rawValue) { [weak self] in
+        let seasonAction = OptionAction(label: L10n.season, selected: episodeGrouping == PodcastGrouping.season) { [weak self] in
             self?.setGroupingSetting(.season)
             Analytics.track(.podcastsScreenEpisodeGroupingChanged, properties: ["value": PodcastGrouping.season])
 
         }
         optionPicker.addAction(action: seasonAction)
 
-        let starAction = OptionAction(label: L10n.statusStarred, selected: podcast.episodeGrouping == PodcastGrouping.starred.rawValue) { [weak self] in
+        let starAction = OptionAction(label: L10n.statusStarred, selected: episodeGrouping == PodcastGrouping.starred) { [weak self] in
             self?.setGroupingSetting(.starred)
             Analytics.track(.podcastsScreenEpisodeGroupingChanged, properties: ["value": PodcastGrouping.starred])
 
@@ -338,7 +335,11 @@ class EpisodeListSearchController: SimpleNotificationsViewController, UISearchBa
 
     private func setSortSetting(_ setting: PodcastEpisodeSortOrder) {
         guard let podcast = podcastDelegate?.displayedPodcast() else { return }
-        podcast.episodeSortOrder = setting.rawValue
+        if FeatureFlag.newSettingsStorage.enabled {
+            podcast.settings.episodesSortOrder = setting
+            podcast.syncStatus = SyncStatus.notSynced.rawValue
+        }
+        podcast.episodeSortOrder = setting.old.rawValue
         DataManager.sharedManager.save(podcast: podcast)
 
         NotificationCenter.postOnMainThread(notification: Constants.Notifications.podcastUpdated, object: podcast.uuid)
@@ -346,6 +347,10 @@ class EpisodeListSearchController: SimpleNotificationsViewController, UISearchBa
 
     private func setGroupingSetting(_ setting: PodcastGrouping) {
         guard let podcast = podcastDelegate?.displayedPodcast() else { return }
+        if FeatureFlag.newSettingsStorage.enabled {
+            podcast.settings.episodeGrouping = setting
+            podcast.syncStatus = SyncStatus.notSynced.rawValue
+        }
         podcast.episodeGrouping = setting.rawValue
         DataManager.sharedManager.save(podcast: podcast)
 

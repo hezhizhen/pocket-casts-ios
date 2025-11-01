@@ -3,16 +3,12 @@ import UIKit
 class PlusAccountPromptViewModel: PlusPricingInfoModel {
     weak var parentController: UIViewController? = nil
 
-    var source: Source = .unknown
+    var source: PlusUpgradeViewSource = .unknown
 
     let subscription: UserInfo.Subscription? = .init()
 
     lazy var products: [PlusProductPricingInfo] = {
-        let productsToDisplay: [Constants.IapProducts] = {
-            guard FeatureFlag.patron.enabled else {
-                return [.yearly]
-            }
-
+        let productsToDisplay: [IAPProductID] = {
             return subscription?.tier == .patron ? [.patronYearly] : [.yearly, .patronYearly]
         }()
 
@@ -21,11 +17,23 @@ class PlusAccountPromptViewModel: PlusPricingInfoModel {
         }
     }()
 
-    override init(purchaseHandler: IapHelper = .shared) {
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    override init(purchaseHandler: IAPHelper = .shared) {
         super.init(purchaseHandler: purchaseHandler)
 
         // Load prices on init
         loadPrices()
+
+        NotificationCenter.default.addObserver(
+            forName: UIContentSizeCategory.didChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.expandViewController()
+        }
     }
 
     func upgradeTapped(with product: PlusProductPricingInfo? = nil) {
@@ -64,43 +72,41 @@ class PlusAccountPromptViewModel: PlusPricingInfoModel {
                 if expiringPlus {
                     return L10n.renewSubscription
                 }
-
-                if product.freeTrialDuration != nil {
-                    return L10n.plusStartMyFreeTrial
+                if product.offer?.type == .freeTrial {
+                    return L10n.startFreeTrial
                 }
-
                 return L10n.plusSubscribeTo
             }()
         }
     }
 
-    enum Source: String {
-        case unknown
-        case accountDetails = "account_details"
-        case plusDetails = "plus_details"
-    }
-
     func showModal(for product: PlusProductPricingInfo? = nil) {
-        guard let parentController else { return }
+        guard let parentController, let product else { return }
 
-        guard FeatureFlag.patron.enabled else {
-            let controller = OnboardingFlow.shared.begin(flow: .plusAccountUpgrade, in: parentController, source: source.rawValue)
-            controller.presentModally(in: parentController)
-            return
+        let context: OnboardingFlow.Context? = ["product": ProductInfo(plan: product.identifier.plan, frequency: .yearly)]
+        let controller = OnboardingFlow.shared.begin(flow: .plusAccountUpgrade, in: parentController, source: source, context: context)
+        let sizeCategory = UIApplication.shared.preferredContentSizeCategory
+        let isAccessibility = sizeCategory.isAccessibilityCategory
+
+        if let sheetPresentationController = controller.sheetPresentationController {
+            sheetPresentationController.prefersGrabberVisible = true
+            sheetPresentationController.detents = isAccessibility ? [.large()] : UIScreen.isSmallScreen ? [.large()] : [.medium()]
         }
-
-        // Set the initial product to display on the upsell
-        let context: OnboardingFlow.Context? = product.map {
-            ["product": Constants.ProductInfo(plan: $0.identifier.plan, frequency: .yearly)]
-        }
-
-        let flow: OnboardingFlow.Flow = subscription?.isExpiring(.patron) == true ? .patronAccountUpgrade : .plusAccountUpgrade
-        let controller = OnboardingFlow.shared.begin(flow: flow, in: parentController, source: source.rawValue, context: context)
-
         parentController.presentFromRootController(controller, animated: true)
     }
 
     func showError() {
         SJUIUtils.showAlert(title: L10n.plusUpgradeNoInternetTitle, message: L10n.plusUpgradeNoInternetMessage, from: parentController)
+    }
+
+    private func expandViewController() {
+        let sizeCategory = UIApplication.shared.preferredContentSizeCategory
+        let isAccessibility = sizeCategory.isAccessibilityCategory
+        if let sheet = parentController?.presentedViewController?.sheetPresentationController {
+            sheet.detents = isAccessibility ? [.large()] : [.medium()]
+            sheet.animateChanges {
+                sheet.selectedDetentIdentifier = isAccessibility ? .large : .medium
+            }
+        }
     }
 }

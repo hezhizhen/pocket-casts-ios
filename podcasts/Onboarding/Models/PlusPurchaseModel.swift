@@ -1,6 +1,7 @@
 import UIKit
 import SwiftUI
 import PocketCastsServer
+import PocketCastsUtils
 
 class PlusPurchaseModel: PlusPricingInfoModel, OnboardingModel {
     weak var parentController: UIViewController? = nil
@@ -8,11 +9,13 @@ class PlusPurchaseModel: PlusPricingInfoModel, OnboardingModel {
     // Keep track of our internal state, and pass this to our view
     @Published var state: PurchaseState = .ready
 
-    private var purchasedProduct: Constants.IapProducts?
+    private var purchasedProduct: IAPProductID?
 
-    var plan: Constants.Plan = .plus
+    var plan: Plan = .plus
 
-    override init(purchaseHandler: IapHelper = .shared) {
+    var customTitle: String?
+
+    override init(purchaseHandler: IAPHelper = .shared) {
         super.init(purchaseHandler: purchaseHandler)
 
         addPaymentObservers()
@@ -38,13 +41,13 @@ class PlusPurchaseModel: PlusPricingInfoModel, OnboardingModel {
     }
 
     // MARK: - Triggers the purchase process
-    func purchase(product: Constants.IapProducts) {
+    func purchase(product: IAPProductID) {
         guard purchaseHandler.canMakePurchases else {
             showPurchaseDisabledAlert(product: product)
             return
         }
 
-        guard purchaseHandler.buyProduct(identifier: product.rawValue) else {
+        guard purchaseHandler.buyProduct(identifier: product) else {
             handlePurchaseFailed(error: nil)
             return
         }
@@ -55,7 +58,7 @@ class PlusPurchaseModel: PlusPricingInfoModel, OnboardingModel {
         state = .purchasing
     }
 
-    func showPurchaseDisabledAlert(product: Constants.IapProducts) {
+    func showPurchaseDisabledAlert(product: IAPProductID) {
         guard let presentingViewController = parentController ?? SceneHelper.rootViewController() else {
             return
         }
@@ -72,6 +75,52 @@ class PlusPurchaseModel: PlusPricingInfoModel, OnboardingModel {
         controller.present(alert, animated: true)
     }
 
+    func handleNext() {
+        guard let parentController else { return }
+
+        if OnboardingFlow.shared.currentFlow.shouldDismissAfterPurchase {
+            parentController.dismiss(animated: true)
+            return
+        }
+
+        let navigationController = parentController as? UINavigationController
+
+        let controller: UIViewController?
+        if SubscriptionHelper.activeTier == .patron {
+            controller = PatronWelcomeViewModel.make(in: navigationController)
+        } else {
+            if !FeatureFlag.newOnboardingAccountCreation.enabled {
+                controller = WelcomeViewModel.make(in: navigationController, displayType: .plus)
+            } else {
+                controller = nil
+            }
+        }
+
+        let presentNextBlock: () -> Void = {
+            guard let controller else {
+                navigationController?.dismiss(animated: true)
+                return
+            }
+
+            guard let navigationController else {
+                // Present the welcome flow
+                parentController.present(controller, animated: true)
+                return
+            }
+
+            // Reset the nav flow to only show the welcome controller
+            navigationController.setViewControllers([controller], animated: true)
+
+        }
+
+        // Dismiss the current flow
+        if parentController.presentedViewController != nil {
+            parentController.dismiss(animated: true, completion: presentNextBlock)
+        } else {
+            presentNextBlock()
+        }
+    }
+
     // Our internal state
     enum PurchaseState {
         case ready
@@ -84,10 +133,11 @@ class PlusPurchaseModel: PlusPricingInfoModel, OnboardingModel {
 }
 
 extension PlusPurchaseModel {
-    static func make(in parentController: UIViewController?, plan: Constants.Plan, selectedPrice: Constants.PlanFrequency) -> UIViewController {
+    static func make(in parentController: UIViewController?, plan: Plan, selectedPrice: PlanFrequency, customTitle: String? = nil) -> UIViewController {
         let viewModel = PlusPurchaseModel()
         viewModel.parentController = parentController
         viewModel.plan = plan
+        viewModel.customTitle = customTitle
 
         let backgroundColor = UIColor(hex: PlusPurchaseModal.Config.backgroundColorHex)
         let modal = PlusPurchaseModal(coordinator: viewModel, selectedPrice: selectedPrice).setupDefaultEnvironment()
@@ -136,49 +186,6 @@ private extension PlusPurchaseModel {
     }
 }
 
-private extension PlusPurchaseModel {
-    private func handleNext() {
-        guard let parentController else { return }
-
-        if OnboardingFlow.shared.currentFlow.shouldDismissAfterPurchase {
-            if FeatureFlag.patron.enabled {
-                parentController.dismiss(animated: true)
-            } else {
-                parentController.presentingViewController?.dismiss(animated: true)
-            }
-
-            return
-        }
-
-        let navigationController = parentController as? UINavigationController
-
-        let controller: UIViewController
-        if FeatureFlag.patron.enabled, SubscriptionHelper.activeTier == .patron {
-            controller = PatronWelcomeViewModel.make(in: navigationController)
-        } else {
-            controller = WelcomeViewModel.make(in: navigationController, displayType: .plus)
-        }
-
-        let presentNextBlock: () -> Void = {
-            guard let navigationController else {
-                // Present the welcome flow
-                parentController.present(controller, animated: true)
-                return
-            }
-
-            // Reset the nav flow to only show the welcome controller
-            navigationController.setViewControllers([controller], animated: true)
-        }
-
-        // Dismiss the current flow
-        if FeatureFlag.patron.enabled {
-            presentNextBlock()
-        } else {
-            parentController.dismiss(animated: true, completion: presentNextBlock)
-        }
-    }
-}
-
 // MARK: - Purchase Notification handlers
 private extension PlusPurchaseModel {
     func handlePurchaseCompleted(_ notification: Notification) {
@@ -199,7 +206,7 @@ private extension PlusPurchaseModel {
         let frequency: SubscriptionFrequency
         switch purchasedProduct {
 
-        case .yearly, .patronYearly:
+        case .yearly, .patronYearly, .yearlyReferral:
             frequency = .yearly
             dateComponent.year = 1
 
@@ -218,8 +225,6 @@ private extension PlusPurchaseModel {
         Settings.setLoginDetailsUpdated()
         AnalyticsHelper.plusPlanPurchased()
 
-        purchaseHandler.purchaseWasSuccessful(purchasedProduct.rawValue)
-
         handleNext()
     }
 
@@ -234,15 +239,10 @@ private extension PlusPurchaseModel {
             let purchasedProduct,
             let error = notification.userInfo?["error"] as? NSError
         else { return }
-
-        purchaseHandler.purchaseWasCancelled(purchasedProduct.rawValue, error: error)
     }
 
     func handlePurchaseFailed(error: NSError?) {
-        defer { state = .failed }
-
-        guard let purchasedProduct else { return }
-        purchaseHandler.purchaseFailed(purchasedProduct.rawValue, error: error ?? defaultError)
+        state = .failed
     }
 
     private var defaultError: NSError {

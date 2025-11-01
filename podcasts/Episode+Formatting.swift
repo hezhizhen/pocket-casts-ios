@@ -7,11 +7,15 @@ extension Episode {
     }
 
     func shouldArchiveOnCompletion() -> Bool {
-        if let podcast = parentPodcast(), podcast.overrideGlobalArchive {
-            return podcast.autoArchivePlayedAfter == 0 && (Settings.archiveStarredEpisodes() || !keepEpisode)
+        #if !APPCLIP
+        if let podcast = parentPodcast(), podcast.isAutoArchiveOverridden {
+            return podcast.autoArchivePlayedAfterTime == 0 && (Settings.archiveStarredEpisodes() || !keepEpisode)
         }
 
         return Settings.autoArchivePlayedAfter() == 0 && (Settings.archiveStarredEpisodes() || !keepEpisode)
+        #else
+        return false
+        #endif
     }
 
     func userHasInteractedWithEpisode() -> Bool {
@@ -19,7 +23,11 @@ extension Episode {
     }
 
     func episodeCanBeCleanedUp() -> Bool {
-        !keepEpisode && !downloaded(pathFinder: DownloadManager.shared) && !inProgress() && !PlaybackManager.shared.inUpNext(episode: self)
+        !keepEpisode &&
+        !downloaded(pathFinder: DownloadManager.shared) &&
+        !inProgress() &&
+        !PlaybackManager.shared.inUpNext(episode: self) &&
+        !DataManager.sharedManager.playlistContainsEpisode(episodeUuid: uuid)
     }
 
     public func subTitle() -> String {

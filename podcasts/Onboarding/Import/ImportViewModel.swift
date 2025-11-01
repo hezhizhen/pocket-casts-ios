@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import PocketCastsUtils
 
 class ImportViewModel: OnboardingModel {
     var navigationController: UINavigationController?
@@ -33,7 +34,7 @@ class ImportViewModel: OnboardingModel {
         .init(id: .castro, displayName: "Castro", steps: L10n.importInstructionsCastro),
         .init(id: .castbox, displayName: "Castbox", steps: L10n.importInstructionsCastbox),
         .init(id: .overcast, displayName: "Overcast", steps: L10n.importInstructionsOvercast),
-        .init(id: .other, displayName: "other apps", steps: L10n.importPodcastsDescription),
+        .init(id: .other, displayName: "other apps", steps: FeatureFlag.useFollowNaming.enabled ? L10n.importPodcastsDescriptionNew : L10n.importPodcastsDescription),
         .init(id: .opmlFromURL, displayName: "URL", steps: L10n.importOpmlFromUrl)
     ]
 
@@ -62,7 +63,7 @@ class ImportViewModel: OnboardingModel {
         }
     }
 
-    struct ImportSource: Identifiable, CustomDebugStringConvertible {
+    struct ImportSource: Identifiable, CustomDebugStringConvertible, Hashable {
         let id: ImportSourceId
         let displayName: String
         let steps: String
@@ -133,7 +134,7 @@ extension ImportViewModel {
         controller.viewModel = viewModel
 
         if let source {
-            OnboardingFlow.shared.updateAnalyticsSource(source)
+            OnboardingFlow.shared.updateAnalyticsSource(PlusUpgradeViewSource.from(string: source))
         }
         return navigationController == nil ? navController : controller
     }

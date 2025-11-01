@@ -30,9 +30,6 @@ class ExpandedCollectionViewController: PCViewController, CollectionHeaderLinkDe
             collectionView.register(UINib(nibName: "DescriptiveCollectionCell", bundle: nil), forCellWithReuseIdentifier: ExpandedCollectionViewController.descriptiveCellId)
             collectionView.register(UINib(nibName: "DiscoverCollectionHeader", bundle: nil), forSupplementaryViewOfKind: UICollectionView.elementKindSectionHeader, withReuseIdentifier: ExpandedCollectionViewController.headerId)
             collectionView.style = .primaryUi02
-            if PlaybackManager.shared.currentEpisode() != nil {
-                collectionView.contentInset = UIEdgeInsets(top: 0, left: 0, bottom: Constants.Values.miniPlayerOffset, right: 0)
-            }
         }
     }
 
@@ -63,6 +60,12 @@ class ExpandedCollectionViewController: PCViewController, CollectionHeaderLinkDe
         } else {
             title = item.title?.localized.localizedCapitalized
         }
+
+        if item.source != nil && item.isAuthenticated == false {
+            customRightBtn = UIBarButtonItem(image: UIImage(named: "podcast-share"), style: .plain, target: self, action: #selector(handleShare))
+        }
+
+        insetAdjuster.setupInsetAdjustmentsForMiniPlayer(scrollView: collectionView)
     }
 
     override func viewWillLayoutSubviews() {
@@ -81,14 +84,9 @@ class ExpandedCollectionViewController: PCViewController, CollectionHeaderLinkDe
         }
     }
 
-    override func viewDidAppear(_ animated: Bool) {
-        NotificationCenter.default.addObserver(self, selector: #selector(miniPlayerStatusDidChange), name: Constants.Notifications.miniPlayerDidDisappear, object: nil)
-    }
-
     override func viewWillDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
         navigationController?.navigationBar.shadowImage = nil
-        NotificationCenter.default.removeObserver(self)
     }
 
     func registerDiscoverDelegate(_ delegate: DiscoverDelegate) {
@@ -100,7 +98,7 @@ class ExpandedCollectionViewController: PCViewController, CollectionHeaderLinkDe
 
         Analytics.track(.discoverCollectionLinkTapped, properties: ["list_id": item.inferredListId])
 
-        if UserDefaults.standard.bool(forKey: Constants.UserDefaults.openLinksInExternalBrowser) {
+        if Settings.openLinks {
             UIApplication.shared.open(url, options: [:], completionHandler: nil)
         } else {
             present(SFSafariViewController(with: url), animated: true, completion: nil)
@@ -111,11 +109,10 @@ class ExpandedCollectionViewController: PCViewController, CollectionHeaderLinkDe
         AppTheme.defaultStatusBarStyle()
     }
 
-    @objc private func miniPlayerStatusDidChange() {
-        if PlaybackManager.shared.currentEpisode() != nil {
-            collectionView.contentInset = UIEdgeInsets(top: 0, left: 0, bottom: Constants.Values.miniPlayerOffset, right: 0)
-        } else {
-            collectionView.contentInset = UIEdgeInsets.zero
-        }
+    @objc func handleShare() {
+        guard let source = item.source, let url = URL(string: source)?.deletingPathExtension() else { return }
+        Analytics.track(.discoverListShareTapped)
+        let activityViewController = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+        present(activityViewController, animated: true)
     }
 }

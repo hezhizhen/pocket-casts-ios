@@ -1,4 +1,5 @@
 import UIKit
+import PocketCastsUtils
 
 protocol PCSearchBarDelegate: AnyObject {
     func searchDidBegin()
@@ -43,7 +44,13 @@ class PCSearchBarController: UIViewController {
     var searchDebounce = 1.seconds
     var searchTimer: Timer?
 
-    var placeholderText = L10n.searchLabel
+    var placeholderText = L10n.searchLabel {
+        didSet {
+            if isViewLoaded {
+                updatePlaceholderColor()
+            }
+        }
+    }
 
     var backgroundColorOverride: UIColor?
 
@@ -55,7 +62,6 @@ class PCSearchBarController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-
         updateColors()
         NotificationCenter.default.addObserver(self, selector: #selector(themeDidChange), name: Constants.Notifications.themeChanged, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(searchRequest), name: Constants.Notifications.podcastSearchRequest, object: nil)
@@ -93,12 +99,16 @@ class PCSearchBarController: UIViewController {
         searchTextField.textColor = textColor
         cancelButton.setTitleColor(textColor, for: .normal)
 
-        let placeholderColor = backgroundColorOverride == nil ? ThemeColor.secondaryText02() : ThemeColor.primaryText02()
-        searchTextField.attributedPlaceholder = NSAttributedString(string: placeholderText, attributes: [NSAttributedString.Key.foregroundColor: placeholderColor])
+        updatePlaceholderColor()
 
         let iconColor = backgroundColorOverride == nil ? ThemeColor.secondaryIcon02() : ThemeColor.primaryIcon02()
         searchIcon.tintColor = iconColor
         clearSearchBtn.tintColor = iconColor
+    }
+
+    private func updatePlaceholderColor() {
+        let placeholderColor = backgroundColorOverride == nil ? ThemeColor.secondaryText02() : ThemeColor.primaryText02()
+        searchTextField.attributedPlaceholder = NSAttributedString(string: placeholderText, attributes: [NSAttributedString.Key.foregroundColor: placeholderColor])
     }
 
     @IBAction func cancelTapped(_ sender: Any) {

@@ -5,7 +5,7 @@ import UIKit
     func bulkSelectionChange(selected: Bool)
     func podcastSelected(podcast: String)
     func podcastUnselected(podcast: String)
-    func didChangePodcasts()
+    func didChangePodcasts(numberSelected: Int)
 }
 
 class PodcastChooserViewController: PCViewController, UITableViewDelegate, UITableViewDataSource {
@@ -16,15 +16,16 @@ class PodcastChooserViewController: PCViewController, UITableViewDelegate, UITab
     var selectedUuids = [String]()
     var selectAllOnLoad = false
     var allowSelectAll = true
+    var analyticsSource: AnalyticsSource = .unknown
 
     private var didChange = false
 
     @IBOutlet var podcastTable: UITableView! {
         didSet {
-            podcastTable.applyInsetForMiniPlayer()
             podcastTable.register(UINib(nibName: "PodcastChooserCell", bundle: nil), forCellReuseIdentifier: cellId)
         }
     }
+    @IBOutlet weak var podcastTableBottomConstraint: NSLayoutConstraint!
 
     var allPodcasts = [Podcast]()
     var selectBtn: UIBarButtonItem!
@@ -38,7 +39,10 @@ class PodcastChooserViewController: PCViewController, UITableViewDelegate, UITab
 
         title = L10n.shareSelectPodcasts
 
+        insetAdjuster.setupInsetAdjustmentsForMiniPlayer(scrollView: podcastTable)
+
         loadPodcasts()
+        Analytics.track(.settingsSelectPodcastsShown, properties: ["source": analyticsSource])
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -52,9 +56,9 @@ class PodcastChooserViewController: PCViewController, UITableViewDelegate, UITab
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
-
+        Analytics.track(.settingsSelectPodcastsDismissed, properties: ["source": analyticsSource])
         if didChange {
-            delegate?.didChangePodcasts()
+            delegate?.didChangePodcasts(numberSelected: selectedUuids.count)
         }
     }
 
@@ -84,7 +88,7 @@ class PodcastChooserViewController: PCViewController, UITableViewDelegate, UITab
         let index = selectedUuids.firstIndex(of: podcastUuid)
         if let index = index {
             selectedUuids.remove(at: index)
-
+            Analytics.track(.settingsSelectPodcastsPodcastToggled, properties: ["uuid": podcastUuid, "enabled": false, "source": analyticsSource])
             // to support things like playlist editting that need to know about all/none selected events send a different event when it gets to 0
             if selectedUuids.count == 0, allowSelectAll {
                 delegate?.bulkSelectionChange(selected: false)
@@ -93,7 +97,7 @@ class PodcastChooserViewController: PCViewController, UITableViewDelegate, UITab
             }
         } else {
             selectedUuids.append(podcastUuid)
-
+            Analytics.track(.settingsSelectPodcastsPodcastToggled, properties: ["uuid": podcastUuid, "enabled": true, "source": analyticsSource])
             // to support things like playlist editting that need to know about all/none selected events send a different event when all are manually selected
             if selectedUuids.count == allPodcasts.count, allowSelectAll {
                 delegate?.bulkSelectionChange(selected: true)
@@ -123,11 +127,18 @@ class PodcastChooserViewController: PCViewController, UITableViewDelegate, UITab
         selectBtn.title = shouldSelectAll() ? L10n.selectAll : L10n.deselectAll
     }
 
+    func currentPodcastsSource() -> [Podcast] {
+        allPodcasts
+    }
+
     @objc private func selectBtnTapped() {
         if shouldSelectAll() {
-            selectedUuids = allPodcasts.map(\.uuid)
+            let podcasts = currentPodcastsSource()
+            Analytics.track(.settingsSelectPodcastsSelectAllTapped, properties: ["source": analyticsSource])
+            selectedUuids = podcasts.map(\.uuid)
             delegate?.bulkSelectionChange(selected: true)
         } else {
+            Analytics.track(.settingsSelectPodcastsSelectNoneTapped, properties: ["source": analyticsSource])
             selectedUuids.removeAll()
             delegate?.bulkSelectionChange(selected: false)
         }
@@ -139,7 +150,8 @@ class PodcastChooserViewController: PCViewController, UITableViewDelegate, UITab
 
     private func shouldSelectAll() -> Bool {
         let onCount = selectedUuids.count
-        let offCount = allPodcasts.count - onCount
+        let podcasts = currentPodcastsSource()
+        let offCount = podcasts.count - onCount
 
         return onCount < offCount
     }

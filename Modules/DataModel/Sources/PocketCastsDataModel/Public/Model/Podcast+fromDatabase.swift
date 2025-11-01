@@ -1,8 +1,8 @@
 import Foundation
-import FMDB
+import PocketCastsUtils
 
 extension Podcast {
-    static func from(resultSet rs: FMResultSet) -> Podcast {
+    static func from(resultSet rs: PCDBResultSet) -> Podcast {
         let podcast = Podcast()
         podcast.id = rs.longLongInt(forColumn: "id")
         podcast.addedDate = DBUtils.convertDate(value: rs.double(forColumn: "addedDate"))
@@ -27,6 +27,7 @@ extension Podcast {
         podcast.trimSilenceAmount = rs.int(forColumn: "trimSilenceAmount")
         podcast.podcastCategory = rs.string(forColumn: "podcastCategory")
         podcast.podcastDescription = rs.string(forColumn: "podcastDescription")
+        podcast.podcastHTMLDescription  = rs.string(forColumn: "podcastHTMLDescription")
         podcast.sortOrder = rs.int(forColumn: "sortOrder")
         podcast.startFrom = rs.int(forColumn: "startFrom")
         podcast.skipLast = rs.int(forColumn: "skipLast")
@@ -53,7 +54,18 @@ extension Podcast {
         podcast.showArchived = rs.bool(forColumn: "showArchived")
         podcast.refreshAvailable = rs.bool(forColumn: "refreshAvailable")
         podcast.folderUuid = rs.string(forColumn: "folderUuid")
+        podcast.usedCustomEffectsBefore = rs.bool(forColumn: "usedCustomEffectsBefore")
+        podcast.isPrivate = rs.bool(forColumn: "isPrivate")
+        podcast.fundingURL = rs.string(forColumn: "fundingURL")
 
         return podcast
     }
 }
+
+extension DBUtils {
+    static func convertData<T: JSONCodable>(value: Data) throws -> T? {
+        return try JSONDecoder().decode(T.self, from: value)
+    }
+}
+
+extension ModifiedDate: JSONCodable {}

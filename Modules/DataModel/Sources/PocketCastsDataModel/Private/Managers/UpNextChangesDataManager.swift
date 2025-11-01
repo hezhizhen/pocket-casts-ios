@@ -1,4 +1,3 @@
-import FMDB
 import PocketCastsUtils
 
 class UpNextChangesDataManager {
@@ -12,9 +11,9 @@ class UpNextChangesDataManager {
 
     // MARK: - Query
 
-    func findReplaceAction(dbQueue: FMDatabaseQueue) -> UpNextChanges? {
+    func findReplaceAction(dbQueue: PCDBQueue) -> UpNextChanges? {
         var replaceAction: UpNextChanges?
-        dbQueue.inDatabase { db in
+        dbQueue.read { db in
             do {
                 let resultSet = try db.executeQuery("SELECT * from \(DataManager.upNextChangesTableName) WHERE type = ?", values: [UpNextChanges.Actions.replace.rawValue])
                 defer { resultSet.close() }
@@ -30,9 +29,9 @@ class UpNextChangesDataManager {
         return replaceAction
     }
 
-    func findUpdateActions(dbQueue: FMDatabaseQueue) -> [UpNextChanges] {
+    func findUpdateActions(dbQueue: PCDBQueue) -> [UpNextChanges] {
         var allUpdateActions = [UpNextChanges]()
-        dbQueue.inDatabase { db in
+        dbQueue.read { db in
             do {
                 let resultSet = try db.executeQuery("SELECT * from \(DataManager.upNextChangesTableName) WHERE type != ?", values: [UpNextChanges.Actions.replace.rawValue])
                 defer { resultSet.close() }
@@ -51,24 +50,24 @@ class UpNextChangesDataManager {
 
     // MARK: - Update
 
-    func saveUpNextRemove(episodeUuid: String, dbQueue: FMDatabaseQueue) {
+    func saveUpNextRemove(episodeUuid: String, dbQueue: PCDBQueue) {
         saveUpdate(action: UpNextChanges.Actions.remove, episodeUuid: episodeUuid, dbQueue: dbQueue)
     }
 
-    func saveUpNextAddToTop(episodeUuid: String, dbQueue: FMDatabaseQueue) {
+    func saveUpNextAddToTop(episodeUuid: String, dbQueue: PCDBQueue) {
         saveUpdate(action: UpNextChanges.Actions.playNext, episodeUuid: episodeUuid, dbQueue: dbQueue)
     }
 
-    func saveUpNextAddToBottom(episodeUuid: String, dbQueue: FMDatabaseQueue) {
+    func saveUpNextAddToBottom(episodeUuid: String, dbQueue: PCDBQueue) {
         saveUpdate(action: UpNextChanges.Actions.playLast, episodeUuid: episodeUuid, dbQueue: dbQueue)
     }
 
-    func saveUpNextAddNowPlaying(episodeUuid: String, dbQueue: FMDatabaseQueue) {
+    func saveUpNextAddNowPlaying(episodeUuid: String, dbQueue: PCDBQueue) {
         saveUpdate(action: UpNextChanges.Actions.playNow, episodeUuid: episodeUuid, dbQueue: dbQueue)
     }
 
-    func saveReplace(episodeList: [String], dbQueue: FMDatabaseQueue) {
-        dbQueue.inDatabase { db in
+    func saveReplace(episodeList: [String], dbQueue: PCDBQueue) {
+        dbQueue.write { db in
             do {
                 // a replace literally replaces everything that came before it, so empty the table out
                 try db.executeUpdate("DELETE FROM \(DataManager.upNextChangesTableName)", values: nil)
@@ -85,8 +84,8 @@ class UpNextChangesDataManager {
         }
     }
 
-    private func saveUpdate(action: UpNextChanges.Actions, episodeUuid: String, dbQueue: FMDatabaseQueue) {
-        dbQueue.inDatabase { db in
+    private func saveUpdate(action: UpNextChanges.Actions, episodeUuid: String, dbQueue: PCDBQueue) {
+        dbQueue.write { db in
             do {
                 // an update replaces any other update that is for the same episode, so delete any that might exist
                 try db.executeUpdate("DELETE FROM \(DataManager.upNextChangesTableName) WHERE uuid = ?", values: [episodeUuid])
@@ -105,8 +104,8 @@ class UpNextChangesDataManager {
 
     // MARK: - Delete
 
-    func deleteChangesOlderThan(utcTime: Int64, dbQueue: FMDatabaseQueue) {
-        dbQueue.inDatabase { db in
+    func deleteChangesOlderThan(utcTime: Int64, dbQueue: PCDBQueue) {
+        dbQueue.write { db in
             do {
                 try db.executeUpdate("DELETE FROM \(DataManager.upNextChangesTableName) where utcTime <= ?", values: [utcTime])
             } catch {
@@ -117,7 +116,7 @@ class UpNextChangesDataManager {
 
     // MARK: - Conversion
 
-    private func createFrom(resultSet rs: FMResultSet) -> UpNextChanges {
+    private func createFrom(resultSet rs: PCDBResultSet) -> UpNextChanges {
         let changes = UpNextChanges()
 
         changes.id = rs.longLongInt(forColumn: "id")

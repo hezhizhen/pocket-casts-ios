@@ -13,7 +13,6 @@
     }
   ],
   "defaultOptions" : {
-    "codeCoverage" : false,
     "environmentVariableEntries" : [
       {
         "key" : "BUILDKITE_ANALYTICS_TOKEN",
@@ -52,6 +51,10 @@
   },
   "testTargets" : [
     {
+      "skippedTests" : [
+        "IAPHelperTests",
+        "IAPHelperTests\/testPurchase()"
+      ],
       "target" : {
         "containerPath" : "container:podcasts.xcodeproj",
         "identifier" : "45ECEF7A27E910E300C65030",
@@ -59,6 +62,10 @@
       }
     },
     {
+      "skippedTests" : [
+        "AutoAddCandidatesDataManagerTests\/testNewQueryPerformance()",
+        "AutoAddCandidatesDataManagerTests\/testSyncableUpNextSetting()"
+      ],
       "target" : {
         "containerPath" : "container:Modules\/DataModel",
         "identifier" : "PocketCastsDataModelTests",

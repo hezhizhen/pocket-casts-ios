@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 
 protocol AnalyticsSourceProvider {
     /// Used to define the source view for the various analytics actions
@@ -7,6 +8,8 @@ protocol AnalyticsSourceProvider {
 
 enum AnalyticsSource: String, AnalyticsDescribable {
     case appIconMenu = "app_icon_menu"
+    case autoAdd = "auto_add"
+    case autoDownloadSettings = "auto_download_settings"
     case carPlay = "carplay"
     case chooseFolder = "choose_folder"
     case chromecast
@@ -18,6 +21,8 @@ enum AnalyticsSource: String, AnalyticsDescribable {
     case downloadStatus = "download_status"
     case episodeDetail = "episode_detail"
     case episodeStatus = "episode_status"
+    case episodeTranscript = "episode_transcript"
+    case episode
     case files
     case filters
     case incomingShareList = "incoming_share_list"
@@ -26,11 +31,13 @@ enum AnalyticsSource: String, AnalyticsDescribable {
     case miniplayer
     case noFiles = "no_files"
     case noFilters = "no_filters"
+    case notifications
     case nowPlayingWidget = "now_playing_widget"
     case player
     case playerPlaybackEffects = "player_playback_effects"
     case playerSkipForwardLongPress = "player_skip_forward_long_press"
     case podcastScreen = "podcast_screen"
+    case podcastScreenYouMightLike = "podcast_screen_you_might_like"
     case podcastSettings = "podcast_settings"
     case podcastsList = "podcasts_list"
     case profile
@@ -45,6 +52,12 @@ enum AnalyticsSource: String, AnalyticsDescribable {
     case watch
     case bookmark
     case interactiveWidget = "interactive_widget"
+    case multiSelect = "multi_select"
+    case episodeSwipeAction = "episode_swipe_action"
+    case handleUserActivity = "handle_user_activity"
+    case suggestedFolderPopup = "popup"
+    case userSatisfactionSurvey = "user_satisfaction_survey"
+    case recommendations
     case unknown
 
     var analyticsDescription: String { rawValue }
@@ -54,7 +67,11 @@ class AnalyticsCoordinator {
     /// Sometimes the playback source can't be inferred, just inform it here
     var currentSource: AnalyticsSource?
 
-    #if !os(watchOS)
+    private var currentEpisodeIsVideo: Bool {
+        PlaybackManager.shared.currentEpisode()?.videoPodcast() ?? false
+    }
+
+    #if !os(watchOS) && !APPCLIP
         var currentAnalyticsSource: AnalyticsSource {
             if let currentSource = currentSource {
                 self.currentSource = nil
@@ -73,7 +90,7 @@ class AnalyticsCoordinator {
                 return
             }
 
-            let defaultProperties: [String: Any] = ["source": currentAnalyticsSource]
+            let defaultProperties: [String: Any] = ["source": currentAnalyticsSource, "content_type": currentEpisodeIsVideo ? "video" : "audio"]
             let mergedProperties = defaultProperties.merging(properties ?? [:]) { current, _ in current }
             Analytics.track(event, properties: mergedProperties)
         }

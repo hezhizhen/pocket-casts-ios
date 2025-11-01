@@ -1,4 +1,5 @@
 import DifferenceKit
+import SwiftUI
 import PocketCastsDataModel
 import PocketCastsServer
 import UIKit
@@ -8,7 +9,6 @@ class StarredViewController: PCViewController {
 
     @IBOutlet var starredTable: UITableView! {
         didSet {
-            starredTable.applyInsetForMiniPlayer()
             registerCells()
             starredTable.estimatedRowHeight = 80
             starredTable.rowHeight = UITableView.automaticDimension
@@ -17,40 +17,24 @@ class StarredViewController: PCViewController {
         }
     }
 
-    @IBOutlet var noEpisodesIcon: UIImageView! {
-        didSet {
-            noEpisodesIcon.tintColor = ThemeColor.primaryIcon02()
-        }
-    }
-
-    @IBOutlet var noEpisodesTitle: ThemeableLabel! {
-        didSet {
-            noEpisodesTitle.text = L10n.profileStarredNoEpisodesTitle
-        }
-    }
-
-    @IBOutlet var noEpisodesDescription: ThemeableLabel! {
-        didSet {
-            noEpisodesDescription.style = .primaryText02
-            noEpisodesDescription.text = L10n.profileStarredNoEpisodesDesc
-        }
-    }
-
     @IBOutlet var loadingIndicator: UIActivityIndicatorView!
 
-    var episodes = [ListEpisode]()
+    var episodes = [ListEpisode]() {
+        didSet {
+            refreshContentUnavailable()
+        }
+    }
     private let refreshQueue = OperationQueue()
     var cellHeights: [IndexPath: CGFloat] = [:]
-    var isMultiSelectEnabled = false {
+    var isMultiSelectEnabled: Bool = false {
         didSet {
             DispatchQueue.main.async { [weak self] in
                 guard let self = self else { return }
                 self.setupNavBar()
                 self.starredTable.beginUpdates()
                 self.starredTable.setEditing(self.isMultiSelectEnabled, animated: true)
-                self.starredTable.updateContentInset(multiSelectEnabled: self.isMultiSelectEnabled)
                 self.starredTable.endUpdates()
-
+                self.insetAdjuster.isMultiSelectEnabled = isMultiSelectEnabled
                 if self.isMultiSelectEnabled {
                     Analytics.track(.starredMultiSelectEntered)
                     self.multiSelectFooter.setSelectedCount(count: self.selectedEpisodes.count)
@@ -88,8 +72,9 @@ class StarredViewController: PCViewController {
         super.viewDidLoad()
 
         refreshQueue.maxConcurrentOperationCount = 1
-        title = L10n.statusStarred
+        self.title = L10n.statusStarred
         setupNavBar()
+        insetAdjuster.setupInsetAdjustmentsForMiniPlayer(scrollView: starredTable)
         if SyncManager.isUserLoggedIn() {
             refreshEpisodesFromServer(animated: false)
         } else {
@@ -183,6 +168,22 @@ class StarredViewController: PCViewController {
 
         navigationItem.leftBarButtonItem = isMultiSelectEnabled ? UIBarButtonItem(title: L10n.selectAll, style: .done, target: self, action: #selector(selectAllTapped)) : nil
         navigationItem.backBarButtonItem = isMultiSelectEnabled ? nil : UIBarButtonItem(title: "", style: .plain, target: nil, action: nil)
+    }
+
+    private func refreshContentUnavailable() {
+        var config: UIContentConfiguration?
+
+        if episodes.isEmpty {
+            let title = L10n.profileStarredNoEpisodesTitle
+            let message = L10n.profileStarredNoEpisodesDesc
+            config = ContentUnavailableConfiguration.emptyState(title: title, message: message, icon: { Image("star_empty") })
+        }
+
+        if #available(iOS 17.0, *) {
+            self.contentUnavailableConfiguration = config
+        } else {
+            self.setContentUnavailableConfiguration(config)
+        }
     }
 }
 

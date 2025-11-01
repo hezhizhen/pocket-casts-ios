@@ -1,22 +1,31 @@
 import Foundation
+import PocketCastsUtils
 
 class Analytics {
     static let shared = Analytics()
     private var adapters: [AnalyticsAdapter]?
+#if !os(watchOS) && !APPCLIP
+    var analyticsAppThemeProvider: AnalyticsAppThemeProviding?
+#endif
 
     // Whether we have adapters registered or not
     var adaptersRegistered: Bool = false
 
     static func register(adapters: [AnalyticsAdapter]) {
         Self.shared.adapters = adapters
-        shared.adaptersRegistered = true
+        Self.shared.setAdaptersRegisteredStatus(true)
     }
 
     /// Unregisters all the registered adapters, disabling analytics
     static func unregister() {
         Self.shared.adapters = nil
-        shared.adaptersRegistered = false
+        Self.shared.setAdaptersRegisteredStatus(false)
     }
+#if !os(watchOS) && !APPCLIP
+    static func add(analyticsAppThemeProvider: AnalyticsAppThemeProviding) {
+        Self.shared.analyticsAppThemeProvider = analyticsAppThemeProvider
+    }
+#endif
 
     /// Convenience method to call Analytics.shared.track*
     static func track(_ event: AnalyticsEvent, properties: [AnyHashable: Any]? = nil) {
@@ -24,10 +33,28 @@ class Analytics {
     }
 
     func track(_ event: AnalyticsEvent, properties: [AnyHashable: Any]? = nil) {
-        let newProperties = properties?.mapValues { (($0 as? AnalyticsDescribable)?.analyticsDescription) ?? $0 }
+        var newProperties = (properties ?? [:]).mapValues { (($0 as? AnalyticsDescribable)?.analyticsDescription) ?? $0 }
+#if !os(watchOS) && !APPCLIP
+        if FeatureFlag.appThemePropertiesLogging.enabled {
+            analyticsAppThemeProvider?.appThemeProperties.forEach { key, value in
+                newProperties[key] = value
+            }
+        }
+#endif
         adapters?.forEach {
             $0.track(name: event.eventName, properties: newProperties)
         }
+    }
+
+    private static func logCurrentAdapters() {
+#if DEBUG
+        FileLog.shared.console("Analytics adapters: \(Self.shared.adapters ?? [])")
+#endif
+    }
+
+    fileprivate func setAdaptersRegisteredStatus(_ value: Bool) {
+        adaptersRegistered = value
+        Self.logCurrentAdapters()
     }
 }
 
@@ -48,15 +75,27 @@ extension Analytics {
     func optOutOfAnalytics() {
         Analytics.track(.analyticsOptOut)
         Settings.setAnalytics(optOut: true)
-        Analytics.unregister()
+        refreshRegistered()
     }
 
     func optInOfAnalytics() {
-        #if !os(watchOS)
-            Settings.setAnalytics(optOut: false)
-            (UIApplication.shared.delegate as? AppDelegate)?.setupAnalytics()
-            Analytics.track(.analyticsOptIn)
-        #endif
+#if !os(watchOS) && !APPCLIP
+        Settings.setAnalytics(optOut: false)
+        setAdaptersRegisteredStatus(false)
+        (UIApplication.shared.delegate as? AppDelegate)?.setupAnalytics()
+        Analytics.track(.analyticsOptIn)
+#endif
+    }
+
+    func refreshRegistered() {
+        if Settings.analyticsOptOut() {
+            Analytics.unregister()
+        }
+#if !os(watchOS) && !APPCLIP
+        (UIApplication.shared.delegate as? AppDelegate)?.setupAnalytics()
+#endif
+        FileLog.shared.addMessage("Analytics: Refreshed Registered Adapters")
+        Analytics.logCurrentAdapters()
     }
 }
 
@@ -69,12 +108,19 @@ protocol AnalyticsDescribable {
 
 /// Classes can implement this to determine their own logic on how to handle each event
 protocol AnalyticsAdapter {
+    var isThirdPartyAdapter: Bool { get }
     func track(name: String, properties: [AnyHashable: Any]?)
+}
+
+extension AnalyticsAdapter {
+    var isThirdPartyAdapter: Bool {
+        false
+    }
 }
 
 // MARK: - Dynamic Event Name
 
-private extension AnalyticsEvent {
+extension AnalyticsEvent {
     var eventName: String {
         return rawValue.toSnakeCaseFromCamelCase()
     }

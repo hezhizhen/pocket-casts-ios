@@ -1,4 +1,5 @@
 import Foundation
+import SwiftProtobuf
 import PocketCastsDataModel
 import PocketCastsUtils
 
@@ -92,8 +93,6 @@ class SyncTask: ApiBaseTask {
 
                     // If server's folderUuid is `nil` then we don't change
                     if podcast.folderUuid?.isEmpty == false {
-                        FileLog.shared.foldersIssue("SyncTask performHomeGridRefresh: changing \(localPodcast.title ?? "") folder from \(localPodcast.folderUuid ?? "nil") to \(podcast.folderUuid ?? "nil")")
-
                         localPodcast.folderUuid = podcast.folderUuid
                     }
 
@@ -151,23 +150,21 @@ class SyncTask: ApiBaseTask {
             return
         }
 
-        // next we need their filters
-        let retrieveFiltersTask = RetrieveFiltersTask()
-        retrieveFiltersTask.completion = { filters in
-            guard let filters = filters else { return }
+        // next we need their playlists
+        let retrievePlaylistsTask = RetrievePlaylistsTask()
+        retrievePlaylistsTask.completion = { playlists in
+            guard let playlists = playlists else { return }
 
-            self.processServerFilters(filters)
+            self.processServerPlaylists(playlists)
         }
-        retrieveFiltersTask.runTaskSynchronously()
+        retrievePlaylistsTask.runTaskSynchronously()
 
-        if dataManager.bookmarksEnabled {
-            // Retrieve all the bookmarks
-            RetrieveBookmarksTask { bookmarks in
-                guard let bookmarks else { return }
+        // Retrieve all the bookmarks
+        RetrieveBookmarksTask { bookmarks in
+            guard let bookmarks else { return }
 
-                self.processServerBookmarks(bookmarks)
-            }.runTaskSynchronously()
-        }
+            self.processServerBookmarks(bookmarks)
+        }.runTaskSynchronously()
 
         UserDefaults.standard.set(lastSyncDate, forKey: ServerConstants.UserDefaults.lastModifiedServerDate)
 
@@ -214,14 +211,14 @@ class SyncTask: ApiBaseTask {
 
         do {
             DataManager.sharedManager.markAllPodcastsSynced()
-            DataManager.sharedManager.markAllSynced(episodes: episodesToSync)
-            DataManager.sharedManager.markAllEpisodeFiltersSynced()
+            if !FeatureFlag.useSyncResponseEpisodeIDs.enabled {
+                DataManager.sharedManager.markAllSynced(episodes: episodesToSync)
+            }
+            DataManager.sharedManager.markAllPlaylistsSynced()
             DataManager.sharedManager.markAllFoldersSynced()
 
-            if dataManager.bookmarksEnabled {
-                Task {
-                    await dataManager.bookmarks.markAllBookmarksAsSynced()
-                }
+            Task {
+                await dataManager.bookmarks.markAllBookmarksAsSynced()
             }
 
             let response = try Api_SyncUpdateResponse(serializedData: responseData)
@@ -248,26 +245,21 @@ class SyncTask: ApiBaseTask {
         var records = [Api_Record]()
         if let podcastChanges = changedPodcasts() {
             records += podcastChanges
-            FileLog.shared.foldersIssue("SyncTask: Number of changed podcasts: \(podcastChanges.count)")
         }
         if let episodeChanges = changedEpisodes(for: episodesToSync) {
             records += episodeChanges
-            FileLog.shared.foldersIssue("SyncTask: Number of changed episodes: \(episodeChanges.count)")
         }
-        if let filterChanges = changedFilters() {
+        if let filterChanges = changedPlaylists() {
             records += filterChanges
-            FileLog.shared.foldersIssue("SyncTask: Number of changed filters: \(filterChanges.count)")
         }
         if let folderChanges = changedFolders() {
             records += folderChanges
-            FileLog.shared.foldersIssue("SyncTask: Number of changed folders: \(folderChanges.count)")
         }
         if let statsChanges = changedStats() {
             records.append(statsChanges)
-            FileLog.shared.foldersIssue("SyncTask: sending stats changes")
         }
 
-        if dataManager.bookmarksEnabled, let bookmarks = changedBookmarks() {
+        if let bookmarks = changedBookmarks() {
             records += bookmarks
             FileLog.shared.addMessage("SyncTask: Number of changed bookmarks: \(bookmarks.count)")
         }
@@ -296,6 +288,7 @@ class SyncTask: ApiBaseTask {
                 syncRequest.country = country
             }
             syncRequest.deviceID = ServerConfig.shared.syncDelegate?.uniqueAppId() ?? ""
+            syncRequest.deviceType = Google_Protobuf_Int32Value(ServerConstants.Values.deviceTypeiOS)
 
             return try syncRequest.serializedData()
         } catch {}

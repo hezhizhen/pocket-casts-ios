@@ -1,7 +1,41 @@
 import Foundation
 import PocketCastsDataModel
-enum LibraryType: Int, AnalyticsDescribable {
-    case fourByFour = 1, threeByThree = 2, list = 3
+import PocketCastsServer
+import PocketCastsUtils
+
+extension LibraryType: AnalyticsDescribable {
+    enum Old: Int {
+        case fourByFour = 1, threeByThree = 2, list = 3
+    }
+
+    init?(oldValue: Int) {
+        guard let old = Old(rawValue: oldValue) else {
+            return nil
+        }
+        self.init(old: old)
+    }
+
+    init(old: Old) {
+        switch old {
+        case .fourByFour:
+            self = .fourByFour
+        case .threeByThree:
+            self = .threeByThree
+        case .list:
+            self = .list
+        }
+    }
+
+    var old: Old {
+        switch self {
+        case .fourByFour:
+            return .fourByFour
+        case .threeByThree:
+            return .threeByThree
+        case .list:
+            return .list
+        }
+    }
 
     var analyticsDescription: String {
         switch self {
@@ -15,9 +49,7 @@ enum LibraryType: Int, AnalyticsDescribable {
     }
 }
 
-enum BadgeType: Int, AnalyticsDescribable {
-    case off = 0, latestEpisode, allUnplayed
-
+extension BadgeType: AnalyticsDescribable {
     var description: String {
         switch self {
         case .off:
@@ -46,18 +78,20 @@ enum PodcastFinishedAction: Int {
 }
 
 enum PodcastThumbnailSize {
-    case list, grid, page
+    case list, grid, page, detail
 }
 
 enum PodcastLicensing: Int32 {
     case keepEpisodesAfterExpiry = 0, deleteEpisodesAfterExpiry = 1
 }
 
-enum PodcastEpisodeSortOrder: Int32, CaseIterable, AnalyticsDescribable {
-    case newestToOldest = 1, oldestToNewest, shortestToLongest, longestToShortest
-
+extension PodcastEpisodeSortOrder: AnalyticsDescribable {
     var description: String {
         switch self {
+        case .titleAtoZ:
+            return L10n.podcastsEpisodeSortTitleAToZ.localizedCapitalized
+        case .titleZtoA:
+            return L10n.podcastsEpisodeSortTitleZToA.localizedCapitalized
         case .newestToOldest:
             return L10n.podcastsEpisodeSortNewestToOldest.localizedCapitalized
         case .oldestToNewest:
@@ -66,12 +100,17 @@ enum PodcastEpisodeSortOrder: Int32, CaseIterable, AnalyticsDescribable {
             return L10n.podcastsEpisodeSortShortestToLongest
         case .longestToShortest:
             return L10n.podcastsEpisodeSortLongestToShortest
+        case .serial:
+            return L10n.podcastsEpisodeSortSerial
         }
     }
 
     var analyticsDescription: String {
         switch self {
-
+        case .titleAtoZ:
+            return "title_a_to_z"
+        case .titleZtoA:
+            return "title_z_to_a"
         case .newestToOldest:
             return "newest_to_oldest"
         case .oldestToNewest:
@@ -80,12 +119,59 @@ enum PodcastEpisodeSortOrder: Int32, CaseIterable, AnalyticsDescribable {
             return "shortest_to_longest"
         case .longestToShortest:
             return "longest_to_shortest"
+        case .serial:
+            return "serial"
         }
     }
 }
 
-enum LibrarySort: Int, CaseIterable, AnalyticsDescribable {
-    case dateAddedNewestToOldest = 1, titleAtoZ = 2, episodeDateNewestToOldest = 5, custom = 6
+extension LibrarySort.Old: AnalyticsDescribable {
+    var analyticsDescription: String {
+        return LibrarySort(old: self).analyticsDescription
+    }
+}
+
+extension LibrarySort: AnalyticsDescribable {
+    enum Old: Int {
+        case dateAddedNewestToOldest = 1, titleAtoZ = 2, episodeDateNewestToOldest = 5, custom = 6, recentlyPlayed = 7
+    }
+
+    init?(oldValue: Int) {
+        guard let old = Old(rawValue: oldValue) else {
+            return nil
+        }
+        self.init(old: old)
+    }
+
+    init(old: Old) {
+        switch old {
+        case .dateAddedNewestToOldest:
+            self = .dateAddedNewestToOldest
+        case .titleAtoZ:
+            self = .titleAtoZ
+        case .episodeDateNewestToOldest:
+            self = .episodeDateNewestToOldest
+        case .custom:
+            self = .custom
+        case .recentlyPlayed:
+            self = .recentlyPlayed
+        }
+    }
+
+    var old: Old {
+        switch self {
+        case .dateAddedNewestToOldest:
+            return .dateAddedNewestToOldest
+        case .titleAtoZ:
+            return .titleAtoZ
+        case .episodeDateNewestToOldest:
+            return .episodeDateNewestToOldest
+        case .custom:
+            return .custom
+        case .recentlyPlayed:
+            return .recentlyPlayed
+        }
+    }
 
     var description: String {
         switch self {
@@ -97,6 +183,8 @@ enum LibrarySort: Int, CaseIterable, AnalyticsDescribable {
             return L10n.podcastsLibrarySortEpisodeReleaseDate
         case .custom:
             return L10n.podcastsLibrarySortCustom
+        case .recentlyPlayed:
+            return L10n.podcastsLibrarySortEpisodeRecentlyPlayed
         }
     }
 
@@ -110,13 +198,13 @@ enum LibrarySort: Int, CaseIterable, AnalyticsDescribable {
             return "episode_release_date"
         case .custom:
             return "drag_and_drop"
+        case .recentlyPlayed:
+            return "episode_recently_played"
         }
     }
 }
 
-enum AppBadge: Int, AnalyticsDescribable {
-    case off = 0, totalUnplayed = 1, newSinceLastOpened = 2, filterCount = 10
-
+extension AppBadge: AnalyticsDescribable {
     var analyticsDescription: String {
         switch self {
         case .off:
@@ -131,9 +219,7 @@ enum AppBadge: Int, AnalyticsDescribable {
     }
 }
 
-enum PrimaryRowAction: Int32, AnalyticsDescribable {
-    case stream = 0, download = 1
-
+extension PrimaryRowAction: AnalyticsDescribable {
     var analyticsDescription: String {
         switch self {
         case .stream:
@@ -144,9 +230,7 @@ enum PrimaryRowAction: Int32, AnalyticsDescribable {
     }
 }
 
-enum PrimaryUpNextSwipeAction: Int32, AnalyticsDescribable {
-    case playNext = 0, playLast = 1
-
+extension PrimaryUpNextSwipeAction: AnalyticsDescribable {
     var analyticsDescription: String {
         switch self {
         case .playNext:
@@ -168,16 +252,87 @@ enum PlaylistIcon: Int32 {
          redTop, blueTop, greenTop, purpleTop, yellowTop
 }
 
-enum PlayerAction: Int, AnalyticsDescribable {
-    case effects = 1, sleepTimer, routePicker, starEpisode, shareEpisode, goToPodcast, chromecast, markPlayed, archive, addBookmark
+extension PlayerAction: AnalyticsDescribable {
 
     /// Specify default actions and their order
     static var defaultActions: [PlayerAction] {
-        [
-            .effects, .sleepTimer, .routePicker, .starEpisode,
-            .shareEpisode, .goToPodcast, .chromecast, .markPlayed,
-            .addBookmark, .archive
-        ]
+        if FeatureFlag.playlistsRebranding.enabled {
+            [
+                .effects, .sleepTimer, .routePicker, .shareEpisode, .addToPlaylist, .download,
+                .transcript, .goToPodcast, .addBookmark, .markPlayed,
+                .starEpisode, .chromecast, .archive
+            ]
+        } else {
+            [
+                .effects, .sleepTimer, .routePicker, .shareEpisode, .download,
+                .transcript, .goToPodcast, .addBookmark, .markPlayed,
+                .starEpisode, .chromecast, .archive
+            ]
+        }
+    }
+
+    public init?(int: Int) {
+        switch int {
+        case 1:
+            self = .effects
+        case 2:
+            self = .sleepTimer
+        case 3:
+            self = .routePicker
+        case 4:
+            self = .starEpisode
+        case 5:
+            self = .shareEpisode
+        case 6:
+            self = .goToPodcast
+        case 7:
+            self = .chromecast
+        case 8:
+            self = .markPlayed
+        case 9:
+            self = .archive
+        case 10:
+            self = .addBookmark
+        case 11:
+            self = .transcript
+        case 12:
+            self = .download
+        case 13:
+            self = .addToPlaylist
+        default:
+            return nil
+        }
+    }
+
+    var intValue: Int {
+        switch self {
+        case .effects:
+            return 1
+        case .sleepTimer:
+            return 2
+        case .routePicker:
+            return 3
+        case .starEpisode:
+            return 4
+        case .shareEpisode:
+            return 5
+        case .goToPodcast:
+            return 6
+        case .chromecast:
+            return 7
+        case .markPlayed:
+            return 8
+        case .archive:
+            return 9
+        case .addBookmark:
+            return 10
+        case .transcript:
+            return 11
+        case .download:
+            return 12
+        case .addToPlaylist:
+            return 13
+        }
     }
 
     func title(episode: BaseEpisode? = nil) -> String {
@@ -216,6 +371,15 @@ enum PlayerAction: Int, AnalyticsDescribable {
 
         case .addBookmark:
             return L10n.addBookmark
+        case .transcript:
+            return L10n.transcript
+        case .download:
+            guard let episode else {
+                return L10n.download
+            }
+            return episode.downloaded(pathFinder: DownloadManager.shared) ? L10n.removeDownload : (episode.isInDownloadProcess ? L10n.statusDownloading : L10n.download)
+        case .addToPlaylist:
+            return L10n.playlistManualEpisodeAddToPlaylist
         }
     }
 
@@ -252,6 +416,15 @@ enum PlayerAction: Int, AnalyticsDescribable {
             return episode is UserEpisode ? "delete-red" : "episode-archive"
         case .addBookmark:
             return "bookmarks-shelf-overflow-icon"
+        case .transcript:
+            return "transcript"
+        case .download:
+            guard let episode else {
+                return "episode-download"
+            }
+            return episode.downloaded(pathFinder: DownloadManager.shared) ? "episode-downloaded" : "episode-download"
+        case .addToPlaylist:
+            return "playlist-add-episode"
         }
     }
 
@@ -277,6 +450,15 @@ enum PlayerAction: Int, AnalyticsDescribable {
             return episode is UserEpisode ? "shelf_delete" : "shelf_archive"
         case .addBookmark:
             return "bookmarks-shelf-icon"
+        case .transcript:
+            return "transcript"
+        case .download:
+            guard let episode else {
+                return "episode-download"
+            }
+            return episode.downloaded(pathFinder: DownloadManager.shared) ? "episode-downloaded" : "episode-download"
+        case .addToPlaylist:
+            return "playlist-add-episode"
         }
     }
 
@@ -284,8 +466,6 @@ enum PlayerAction: Int, AnalyticsDescribable {
         switch self {
         case .starEpisode, .shareEpisode:
             return episode is Episode
-        case .addBookmark:
-            return isAvailable
         default:
             return true
         }
@@ -295,8 +475,8 @@ enum PlayerAction: Int, AnalyticsDescribable {
     /// If false, the action will be hidden from the player shelf and overflow menu
     var isAvailable: Bool {
         switch self {
-        case .addBookmark:
-            return FeatureFlag.bookmarks.enabled
+        case .addToPlaylist:
+            return FeatureFlag.playlistsRebranding.enabled
         default:
             return true
         }
@@ -324,12 +504,18 @@ enum PlayerAction: Int, AnalyticsDescribable {
             return "archive"
         case .addBookmark:
             return "bookmark"
+        case .transcript:
+            return "transcript"
+        case .download:
+            return "download"
+        case .addToPlaylist:
+            return "add_to_playlist"
         }
     }
 }
 
 enum MultiSelectAction: Int32, CaseIterable, AnalyticsDescribable {
-    case playLast = 1, playNext, download, archive, markAsPlayed, star, moveToTop, moveToBottom, removeFromUpNext, unstar, unarchive, removeDownload, markAsUnplayed, delete, share
+    case playLast = 1, playNext, download, archive, markAsPlayed, star, moveToTop, moveToBottom, removeFromUpNext, unstar, unarchive, removeDownload, markAsUnplayed, delete, share, removeListeningHistory
 
     func title() -> String {
         switch self {
@@ -363,6 +549,8 @@ enum MultiSelectAction: Int32, CaseIterable, AnalyticsDescribable {
             return L10n.delete
         case .share:
             return L10n.share
+        case .removeListeningHistory:
+            return L10n.listeningHistoryRemove
         }
     }
 
@@ -398,6 +586,8 @@ enum MultiSelectAction: Int32, CaseIterable, AnalyticsDescribable {
             return "episode-delete"
         case .share:
             return "podcast-share"
+        case .removeListeningHistory:
+            return "episode-delete"
         }
     }
 
@@ -433,6 +623,8 @@ enum MultiSelectAction: Int32, CaseIterable, AnalyticsDescribable {
             return "delete"
         case .share:
             return "share"
+        case .removeListeningHistory:
+            return "listening_history_remove_episode"
         }
     }
 
@@ -443,6 +635,30 @@ enum MultiSelectAction: Int32, CaseIterable, AnalyticsDescribable {
 
         default:
             return true
+        }
+    }
+}
+
+extension BookmarksSort {
+    func option(lastOption: BookmarkSortOption) -> BookmarkSortOption {
+        switch self {
+        case .newestToOldest:
+            return .newestToOldest
+        case .oldestToNewest:
+            return .oldestToNewest
+        case .timestamp:
+            return lastOption
+        }
+    }
+
+    init(option: BookmarkSortOption) {
+        switch option {
+        case .newestToOldest:
+            self = .newestToOldest
+        case .oldestToNewest:
+            self = .oldestToNewest
+        case .timestamp, .episode, .podcastAndEpisode:
+            self = .timestamp
         }
     }
 }

@@ -4,6 +4,16 @@ import PocketCastsUtils
 struct EndOfYearCard: View {
     @EnvironmentObject var theme: Theme
 
+    let viewModel: ViewModel
+
+    struct ViewModel {
+        let title: String
+        let description: String
+        let imageName: String
+        let imagePadding: CGFloat
+        let backgroundColor: Color?
+    }
+
     private var imageScale: Double {
         A11y.isDisplayZoomed ? 0.75 : 1.0
     }
@@ -12,14 +22,14 @@ struct EndOfYearCard: View {
         ZStack {
             HStack {
                 VStack(alignment: .leading, spacing: Constants.textSpace) {
-                    Text(L10n.eoyTitle)
+                    Text(viewModel.title)
                         .minimumScaleFactor(0.7)
                         .font(style: .title2, weight: .semibold, maxSizeCategory: .extraExtraLarge)
                         .foregroundColor(.white)
 
-                    Text(L10n.eoyCardDescription)
+                    Text(viewModel.description)
                         .font(style: .footnote, weight: .semibold, maxSizeCategory: .accessibilityMedium)
-                        .foregroundColor(.gray)
+                        .foregroundColor(.white)
                 }
                 .padding()
                 Spacer()
@@ -32,17 +42,13 @@ struct EndOfYearCard: View {
                     HStack {
                         Spacer()
 
-                        Image("23_small")
-                            .resizable()
-                            .scaledToFit()
-                            .frame(width: Constants.eoyImageSize.width * imageScale,
-                                   height: Constants.eoyImageSize.height * imageScale)
-                            .padding(.trailing, Constants.eoyImageTrailingPadding)
+                        Image(viewModel.imageName)
+                            .padding(.trailing, viewModel.imagePadding)
                             .offset(x: 40)
                     }
                 }
             }
-            .background(theme.activeTheme.isDark ? Constants.darkThemeBackgroundColor : Constants.lightThemeBackgroundColor)
+            .background(viewModel.backgroundColor ?? ( theme.activeTheme.isDark ? Constants.darkThemeBackgroundColor : Constants.lightThemeBackgroundColor))
             .cornerRadius(Constants.cornerRadius)
         }
         .padding()
@@ -50,9 +56,6 @@ struct EndOfYearCard: View {
 
     private struct Constants {
         static let textSpace: CGFloat = 8
-
-        static let eoyImageSize: CGSize = .init(width: 180, height: 180)
-        static let eoyImageTrailingPadding: CGFloat = 20
 
         static let lightThemeBackgroundColor: Color = UIColor(hex: "#1A1A1A").color
         static let darkThemeBackgroundColor: Color = UIColor(hex: "#222222").color
@@ -63,7 +66,7 @@ struct EndOfYearCard: View {
 
 struct EndOfYearCard_Previews: PreviewProvider {
     static var previews: some View {
-        EndOfYearCard()
+        EndOfYearCard(viewModel: .init(title: "Playback 2024", description: "See your last 2024 playback", imageName: "23_small", imagePadding: 20, backgroundColor: nil))
             .environmentObject(Theme(previewTheme: .light))
     }
 }

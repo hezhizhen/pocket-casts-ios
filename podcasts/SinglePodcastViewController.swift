@@ -1,4 +1,5 @@
 import PocketCastsServer
+import PocketCastsUtils
 import UIKit
 
 class SinglePodcastViewController: UIViewController, DiscoverSummaryProtocol {
@@ -23,8 +24,8 @@ class SinglePodcastViewController: UIViewController, DiscoverSummaryProtocol {
             subscribeButton.onImage = UIImage(named: "discover_tick")?.tintedImage(ThemeColor.support02())
             subscribeButton.offImage = UIImage(named: "discover_add")?.tintedImage(ThemeColor.primaryIcon02())
 
-            subscribeButton.offAccessibilityLabel = L10n.subscribe
-            subscribeButton.onAccessibilityLabel = L10n.subscribed
+            subscribeButton.offAccessibilityLabel = FeatureFlag.useFollowNaming.enabled ? L10n.follow : L10n.subscribe
+            subscribeButton.onAccessibilityLabel = FeatureFlag.useFollowNaming.enabled ? L10n.unfollow : L10n.subscribed
         }
     }
 
@@ -33,6 +34,8 @@ class SinglePodcastViewController: UIViewController, DiscoverSummaryProtocol {
     private var podcast: DiscoverPodcast?
     private var item: DiscoverItem?
     private var featuredDescription: String?
+    private var region: String?
+    private var category: DiscoverCategory?
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -61,16 +64,19 @@ class SinglePodcastViewController: UIViewController, DiscoverSummaryProtocol {
 
         guard let listId = item?.uuid else { return }
 
-        AnalyticsHelper.listImpression(listId: listId)
+        let categoryId = category?.id.map(String.init)
+        AnalyticsHelper.listImpression(listId: listId, category: categoryId)
     }
 
     // MARK: DiscoverSummaryProtocol
 
-    func populateFrom(item: DiscoverItem) {
+    func populateFrom(item: DiscoverItem, region: String?, category: DiscoverCategory?) {
         guard let source = item.source else { return }
 
         self.item = item
-        DiscoverServerHandler.shared.discoverPodcastList(source: source, completion: { [weak self] podcastList in
+        self.region = region
+        self.category = category
+        DiscoverServerHandler.shared.discoverPodcastList(source: source, authenticated: item.authenticated, completion: { [weak self] podcastList in
             guard let discoverPodcast = podcastList?.podcasts else { return }
 
             self?.podcast = discoverPodcast.first
@@ -130,6 +136,7 @@ class SinglePodcastViewController: UIViewController, DiscoverSummaryProtocol {
         if let listId = item?.uuid, let podcastUuid = podcast.uuid {
             AnalyticsHelper.podcastSubscribedFromList(listId: listId, podcastUuid: podcastUuid)
         }
+        AnalyticsHelper.adSubscribed(categoryName: self.category?.name ?? "unknown", region: region ?? "unknown", podcastUUID: podcast.uuid ?? "unknown", categoryID: item?.categoryID ?? 0)
 
         delegate?.subscribe(podcast: podcast)
     }
@@ -139,8 +146,14 @@ class SinglePodcastViewController: UIViewController, DiscoverSummaryProtocol {
 
         delegate?.show(discoverPodcast: podcast, placeholderImage: nil, isFeatured: true, listUuid: item?.uuid)
 
-        if let listId = item?.uuid, let podcastUuid = podcast.uuid {
-            AnalyticsHelper.podcastTappedFromList(listId: listId, podcastUuid: podcastUuid)
+        if let item, let podcastUuid = podcast.uuid {
+            if let listId = item.uuid {
+                AnalyticsHelper.podcastTappedFromList(listId: listId, podcastUuid: podcastUuid)
+            }
+
+            if item.isSponsored == true {
+                AnalyticsHelper.adTapped(categoryName: self.category?.name ?? "unknown", region: region ?? "unknown", podcastUUID: podcastUuid, categoryID: item.categoryID ?? 0)
+            }
         }
     }
 

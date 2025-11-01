@@ -1,5 +1,6 @@
 import Foundation
 import PocketCastsDataModel
+import PocketCastsUtils
 import SwiftProtobuf
 
 extension SyncTask {
@@ -18,6 +19,10 @@ extension SyncTask {
             podcastRecord.subscribed.value = podcast.isSubscribed()
             podcastRecord.sortPosition.value = podcast.sortOrder
 
+            if FeatureFlag.settingsSync.enabled {
+                podcastRecord.settings = podcast.apiSettings
+            }
+
             // There's a bug on the watch app that resets all users folders
             // Since the watch don't use folders at all, it shouldn't sync
             #if !os(watchOS)
@@ -27,6 +32,8 @@ extension SyncTask {
             if let addedDate = podcast.addedDate {
                 podcastRecord.dateAdded = Google_Protobuf_Timestamp(date: addedDate)
             }
+
+            FileLog.shared.addMessage("Syncing new settings for \(podcastRecord.uuid): \(try! podcastRecord.settings.jsonString())")
 
             var apiRecord = Api_Record()
             apiRecord.podcast = podcastRecord
@@ -65,6 +72,10 @@ extension SyncTask {
                 episodeRecord.isDeleted.value = episode.archived
                 episodeRecord.isDeletedModified.value = episode.archivedModified
             }
+            if let deselectedChapters = episode.deselectedChapters {
+                episodeRecord.deselectedChapters = deselectedChapters
+                episodeRecord.deselectedChaptersModified.value = episode.deselectedChaptersModified
+            }
 
             var apiRecord = Api_Record()
             apiRecord.episode = episodeRecord
@@ -100,42 +111,80 @@ extension SyncTask {
         return folderRecords
     }
 
-    func changedFilters() -> [Api_Record]? {
-        let filtersToSync = DataManager.sharedManager.allUnsyncedFilters()
+    func changedPlaylists() -> [Api_Record]? {
+        let playlistsToSync = DataManager.sharedManager.allUnsyncedPlaylists()
 
-        if filtersToSync.count == 0 { return nil }
+        if playlistsToSync.count == 0 { return nil }
 
-        var filterRecords = [Api_Record]()
-        for filter in filtersToSync {
-            var filterRecord = Api_SyncUserPlaylist()
-            filterRecord.allPodcasts.value = filter.podcastUuids.count == 0
-            filterRecord.uuid = filter.uuid
-            filterRecord.originalUuid = filter.uuid // server side this field is important, because it will remain the same case DO NOT REMOVE
-            filterRecord.isDeleted.value = filter.wasDeleted
-            filterRecord.title.value = filter.playlistName
-            filterRecord.podcastUuids.value = filter.podcastUuids
-            filterRecord.audioVideo.value = filter.filterAudioVideoType
-            filterRecord.notDownloaded.value = filter.filterNotDownloaded
-            filterRecord.downloaded.value = filter.filterDownloaded
-            filterRecord.downloading.value = filter.filterDownloading
-            filterRecord.finished.value = filter.filterFinished
-            filterRecord.partiallyPlayed.value = filter.filterPartiallyPlayed
-            filterRecord.unplayed.value = filter.filterUnplayed
-            filterRecord.starred.value = filter.filterStarred
-            filterRecord.filterHours.value = filter.filterHours
-            filterRecord.sortPosition.value = filter.sortPosition
-            filterRecord.sortType.value = filter.sortType
-            filterRecord.iconID.value = filter.customIcon
-            filterRecord.filterDuration.value = filter.filterDuration
-            filterRecord.shorterThan.value = filter.shorterThan
-            filterRecord.longerThan.value = filter.longerThan
+        var playlistRecords = [Api_Record]()
+        for playlist in playlistsToSync {
+            let syncPlaylist = createSyncUserPlaylist(from: playlist)
 
             var apiRecord = Api_Record()
-            apiRecord.playlist = filterRecord
-            filterRecords.append(apiRecord)
+            apiRecord.playlist = syncPlaylist
+            playlistRecords.append(apiRecord)
         }
 
-        return filterRecords
+        return playlistRecords
+    }
+
+    private func createSyncUserPlaylist(from filter: EpisodeFilter) -> Api_SyncUserPlaylist {
+        var playlistRecord = Api_SyncUserPlaylist()
+        playlistRecord.allPodcasts.value = filter.podcastUuids.count == 0
+        playlistRecord.uuid = filter.uuid
+        playlistRecord.originalUuid = filter.uuid // server side this field is important, because it will remain the same case DO NOT REMOVE
+        playlistRecord.isDeleted.value = filter.wasDeleted
+        playlistRecord.title.value = filter.playlistName
+        playlistRecord.podcastUuids.value = filter.podcastUuids
+        playlistRecord.audioVideo.value = filter.filterAudioVideoType
+        playlistRecord.notDownloaded.value = filter.filterNotDownloaded
+        playlistRecord.downloaded.value = filter.filterDownloaded
+        playlistRecord.downloading.value = filter.filterDownloading
+        playlistRecord.finished.value = filter.filterFinished
+        playlistRecord.partiallyPlayed.value = filter.filterPartiallyPlayed
+        playlistRecord.unplayed.value = filter.filterUnplayed
+        playlistRecord.starred.value = filter.filterStarred
+        playlistRecord.filterHours.value = filter.filterHours
+        playlistRecord.sortPosition.value = filter.sortPosition
+        playlistRecord.sortType.value = filter.sortType
+        playlistRecord.iconID.value = filter.customIcon
+        playlistRecord.filterDuration.value = filter.filterDuration
+        playlistRecord.shorterThan.value = filter.shorterThan
+        playlistRecord.longerThan.value = filter.longerThan
+        playlistRecord.manual.value = filter.manual
+
+        if filter.manual {
+            let episodes = DataManager.sharedManager.playlistEpisodes(for: filter)
+            playlistRecord.episodes = episodes.map { episode in
+                createSyncEpisode(from: episode)
+            }
+            playlistRecord.episodeOrder = episodes.map { $0.uuid }
+        }
+        return playlistRecord
+    }
+
+    private func createSyncEpisode(from episode: Episode) -> Api_SyncPlaylistEpisode {
+        var playlistEpisode = Api_SyncPlaylistEpisode()
+        playlistEpisode.episode = episode.uuid
+        playlistEpisode.podcast = episode.parentIdentifier()
+
+        if let addedDate = episode.addedDate {
+            playlistEpisode.added = Google_Protobuf_Int64Value(date: addedDate)
+        }
+
+        if let publishedDate = episode.publishedDate {
+            playlistEpisode.published = Google_Protobuf_Timestamp(date: publishedDate)
+        }
+
+        if let title = episode.title, !title.isEmpty {
+            playlistEpisode.title.value = title
+        }
+
+        if let url = episode.downloadUrl, !url.isEmpty {
+            playlistEpisode.url.value = url
+        }
+
+        return playlistEpisode
     }
 
     /// Retrieve any bookmarks that need to be sent to the server
@@ -206,6 +255,31 @@ private extension Api_SyncUserBookmark {
 
         self.title.value = bookmark.title
         self.titleModified = .init(date: bookmark.titleModified ?? bookmark.created)
+    }
+}
+
+// MARK: Settings Sync
+
+private extension Podcast {
+    var apiSettings: Api_PodcastSettings {
+        var settings = Api_PodcastSettings()
+        settings.playbackEffects.update(self.settings.$customEffects)
+        settings.autoStartFrom.update(self.settings.$autoStartFrom)
+        settings.autoSkipLast.update(self.settings.$autoSkipLast)
+        settings.playbackSpeed.update(self.settings.$playbackSpeed)
+        settings.trimSilence.update(self.settings.$trimSilence)
+        settings.volumeBoost.update(self.settings.$boostVolume)
+        settings.notification.update(self.settings.$notification)
+        settings.addToUpNext.update(self.settings.$addToUpNext)
+        settings.addToUpNextPosition.update(self.settings.$addToUpNextPosition)
+        settings.episodesSortOrder.update(self.settings.$episodesSortOrder)
+        settings.episodeGrouping.update(self.settings.$episodeGrouping)
+        settings.showArchived.update(self.settings.$showArchived)
+        settings.autoArchive.update(self.settings.$autoArchive)
+        settings.autoArchivePlayed.update(self.settings.$autoArchivePlayed)
+        settings.autoArchiveInactive.update(self.settings.$autoArchiveInactive)
+        settings.autoArchiveEpisodeLimit.update(self.settings.$autoArchiveEpisodeLimit)
+        return settings
     }
 }
 

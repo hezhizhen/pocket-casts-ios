@@ -2,46 +2,47 @@ import Foundation
 import SwiftUI
 
 struct HungryForMoreView: View {
+    @Environment(\.widgetColorScheme) var colorScheme
+    @Environment(\.isAccentedRenderingMode) var isAccentedRenderingMode
+
     var body: some View {
-        Link(destination: URL(string: "pktc://discover")!) {
-            HStack {
-                Image("search").resizable()
-                    .frame(width: 40, height: 40, alignment: .center)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(L10n.widgetsDiscoverPromptTitle)
-                        .font(.footnote)
-                        .fontWeight(.semibold)
-                        .foregroundColor(Color.secondary)
-                        .lineLimit(1)
-                    Text(L10n.widgetsDiscoverPromptMsg)
-                        .font(.caption2)
-                        .foregroundColor(Color(UIColor.tertiaryLabel))
-                        .lineLimit(1)
-                }
-            }.offset(x: -8, y: 0)
+        Link(destination: URL(string: "pktc://discover?source=widget")!) {
+            VStack(alignment: .center, spacing: 3) {
+                Text(L10n.widgetsDiscoverPromptTitle)
+                    .font(.footnote)
+                    .fontWeight(.semibold)
+                    .foregroundColor(colorScheme.bottomTextColor)
+                    .lineLimit(1)
+                    .backwardWidgetAccentable(isAccentedRenderingMode)
+                Text(L10n.widgetsDiscoverPromptMsg)
+                    .font(.caption2)
+                    .foregroundColor(colorScheme.bottomTextColor.opacity(0.8))
+                    .lineLimit(1)
+                    .backwardWidgetAccentable(isAccentedRenderingMode)
+            }
+            .offset(x: -8, y: 0)
         }
     }
 }
 
 struct HungryForMoreLargeView: View {
-    var body: some View {
-        Link(destination: URL(string: "pktc://discover")!) {
-            VStack(alignment: .center, spacing: 16) {
-                Image("search")
-                    .resizable()
-                    .frame(width: 60, height: 60, alignment: .center)
+    @Environment(\.widgetColorScheme) var colorScheme
+    @Environment(\.isAccentedRenderingMode) var isAccentedRenderingMode
 
-                VStack(spacing: 4) {
-                    Text(L10n.widgetsDiscoverPromptTitle)
-                        .font(.footnote)
-                        .fontWeight(.semibold)
-                        .foregroundColor(Color.secondary)
-                        .lineLimit(1)
-                    Text(L10n.widgetsDiscoverPromptMsg)
-                        .font(.caption2)
-                        .foregroundColor(Color(UIColor.tertiaryLabel))
-                        .lineLimit(1)
-                }
+    var body: some View {
+        Link(destination: URL(string: "pktc://discover?source=widget")!) {
+            VStack(alignment: .center, spacing: 4) {
+                Text(L10n.widgetsDiscoverPromptTitle)
+                    .font(.footnote)
+                    .fontWeight(.semibold)
+                    .foregroundColor(colorScheme.bottomTextColor)
+                    .lineLimit(1)
+                    .backwardWidgetAccentable(isAccentedRenderingMode)
+                Text(L10n.widgetsDiscoverPromptMsg)
+                    .font(.caption2)
+                    .foregroundColor(colorScheme.bottomTextColor.opacity(0.8))
+                    .lineLimit(1)
+                    .backwardWidgetAccentable(isAccentedRenderingMode)
             }
         }
     }

@@ -13,7 +13,7 @@ class AuthenticationHelper {
         if let username = ServerSettings.syncingEmail(), let password = ServerSettings.syncingPassword(), !password.isEmpty {
             return try await validateLogin(username: username, password: password, scope: scope).token
         }
-        else if let token = ServerSettings.refreshToken {
+        else if let token = try? ServerSettings.refreshToken() {
             return try await validateLogin(identityToken: token, scope: scope).token
         }
 
@@ -43,7 +43,7 @@ class AuthenticationHelper {
         let response = try await ApiServerHandler.shared.validateLogin(identityToken: identityToken, scope: scope)
         handleSuccessfulSignIn(response)
 
-        ServerSettings.refreshToken = response.refreshToken
+        ServerSettings.setRefreshToken(response.refreshToken)
 
         return response
     }
@@ -59,13 +59,18 @@ class AuthenticationHelper {
 
     private static func handleSuccessfulSignIn(_ response: AuthenticationResponse) {
         SyncManager.clearTokensFromKeyChain()
+        FileLog.shared.addMessage("AuthenticationHelper.handleSuccessfulSignIn clearTokensFromKeyChain")
 
         ServerSettings.userId = response.uuid
         ServerSettings.syncingV2Token = response.token
-        ServerSettings.refreshToken = response.refreshToken
+        ServerSettings.setRefreshToken(response.refreshToken)
 
-        // we've signed in, set all our existing podcasts to be non synced
-        DataManager.sharedManager.markAllPodcastsUnsynced()
+        // we've signed in, set all our existing podcasts to
+        // be non synced if the user never logged in before
+        if (FeatureFlag.onlyMarkPodcastsUnsyncedForNewUsers.enabled && ServerSettings.lastSyncTime == nil)
+            || !FeatureFlag.onlyMarkPodcastsUnsyncedForNewUsers.enabled {
+            DataManager.sharedManager.markAllPodcastsUnsynced()
+        }
 
         SyncManager.syncReason = .login
         ServerSettings.clearLastSyncTime()

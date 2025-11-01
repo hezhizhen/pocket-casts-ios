@@ -7,7 +7,7 @@ extension NetworkUtils {
     func downloadEpisodeRequested(autoDownloadStatus: AutoDownloadStatus, _ allowed: ((_ later: Bool) -> Void)?, disallowed: (() -> Void)?) {
         let mobileDataAllowed = autoDownloadStatus == .autoDownloaded ? Settings.autoDownloadMobileDataAllowed() : Settings.mobileDataAllowed()
 
-        if mobileDataAllowed || isConnectedToWifi() {
+        if mobileDataAllowed || isConnectedToUnexpensiveConnection() {
             allowed?(false)
 
             return
@@ -21,7 +21,8 @@ extension NetworkUtils {
             allowed?(true)
         }
         laterAction.outline = true
-        optionsPicker.addDescriptiveActions(title: L10n.notOnWifi, message: L10n.downloadDataWarning, icon: "option-alert", actions: [downloadAction, laterAction])
+
+        optionsPicker.addAttributedDescriptiveActions(title: L10n.notOnWifi, message: L10n.downloadDataWarningWithSettingsLink("pktc://settings/storage-and-data"), icon: "option-alert", actions: [downloadAction, laterAction])
 
         optionsPicker.setNoActionCallback {
             disallowed?()
@@ -31,7 +32,7 @@ extension NetworkUtils {
     }
 
     func streamEpisodeRequested(_ allowed: (() -> Void)?, disallowed: (() -> Void)?) {
-        if Settings.mobileDataAllowed() || isConnectedToWifi() {
+        if Settings.mobileDataAllowed() || isConnectedToUnexpensiveConnection() {
             allowed?()
 
             return
@@ -41,7 +42,7 @@ extension NetworkUtils {
         let streamAction = OptionAction(label: L10n.podcastStreamConfirmation, icon: nil) {
             allowed?()
         }
-        optionsPicker.addDescriptiveActions(title: L10n.notOnWifi, message: L10n.podcastStreamDataWarning, icon: "option-alert", actions: [streamAction])
+        optionsPicker.addAttributedDescriptiveActions(title: L10n.notOnWifi, message: L10n.podcastStreamDataWarningWithSettings("pktc://settings/storage-and-data"), icon: "option-alert", actions: [streamAction])
 
         optionsPicker.setNoActionCallback {
             disallowed?()
@@ -55,7 +56,7 @@ extension NetworkUtils {
     func uploadEpisodeRequested(_ allowed: ((_ later: Bool) -> Void)?, disallowed: (() -> Void)?) {
         let mobileDataAllowed = !ServerSettings.userEpisodeOnlyOnWifi()
 
-        if mobileDataAllowed || isConnectedToWifi() {
+        if mobileDataAllowed || isConnectedToUnexpensiveConnection() {
             allowed?(false)
 
             return
@@ -68,6 +69,7 @@ extension NetworkUtils {
         let laterAction = OptionAction(label: L10n.queueForLater, icon: nil) {
             allowed?(true)
         }
+        laterAction.outline = true
         optionsPicker.addDescriptiveActions(title: L10n.notOnWifi, message: "", icon: "option-alert", actions: [uploadAction, laterAction])
 
         optionsPicker.setNoActionCallback {

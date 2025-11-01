@@ -28,9 +28,9 @@ actor LogBuffer {
     }
 
     #if os(watchOS)
-        private let maxFileSize = 25.kilobytes
+        private let maxFileSize = 65.kilobytes
     #else
-        private let maxFileSize = 100.kilobytes
+        private let maxFileSize = 1.megabytes
     #endif
 
     func append(_ message: String, date: Date) {
@@ -38,6 +38,10 @@ actor LogBuffer {
         logger?.log("\(message, privacy: .public)")
 
         logBuffer.append(LogEntry(message, timestamp: date))
+    }
+
+    func console(_ message: String) {
+        logger?.log("\(message, privacy: .public)")
     }
 
     private func writeLogBufferToDisk() {
@@ -113,6 +117,7 @@ public final class FileLog {
     }()
 
     private var logBuffer: LogBuffer
+    public let publisher = PassthroughSubject<String, Never>()
 
     init(
         logPersistence: PersistentTextWriting,
@@ -126,19 +131,14 @@ public final class FileLog {
     public func addMessage(_ message: String, date: Date = Date()) {
         Task {
             await logBuffer.append(message, date: date)
+            publisher.send(message)
         }
     }
 
-    // Just a shortcut for `addMessage` to be used specifically for
-    // the podcasts out of folders issue
-    // By doing so it will be easier to delete those logs once the issue is
-    // sorted.
-    //
-    // See: https://github.com/Automattic/pocket-casts-ios/issues/791
-    public func foldersIssue(_ message: String?) {
-        guard let message else { return }
-
-        addMessage("[Folders] \(message)")
+    public func console(_ message: String) {
+        Task {
+            await logBuffer.console(message)
+        }
     }
 
     public func forceFlush() {
@@ -152,6 +152,10 @@ public final class FileLog {
             let log = await logBuffer.loadLogFileAsString()
             completion(log)
         }
+    }
+
+    public func logFileAsString() async -> String {
+        return await logBuffer.loadLogFileAsString()
     }
 
     // Creates a merged file from `mainLogFilePath` and `backupLogFilePath` to be used for enquing the file upload.

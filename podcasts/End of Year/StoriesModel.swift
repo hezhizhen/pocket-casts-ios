@@ -4,7 +4,7 @@ import SwiftUI
 
 @MainActor
 class StoriesModel: ObservableObject {
-    var progress: Double
+    @Published var progress: Double
 
     @Published var currentStoryIndex: Int = 0
 
@@ -43,6 +43,14 @@ class StoriesModel: ObservableObject {
         configuration.storiesToPreload
     }
 
+    var indicatorHeight: CGFloat {
+        configuration.indicatorHeight
+    }
+
+    var indicatorSpacing: CGFloat {
+        configuration.indicatorSpacing
+    }
+
     init(dataSource: StoriesDataSource, configuration: StoriesConfiguration, activeTier: @autoclosure @escaping () -> SubscriptionTier = SubscriptionHelper.activeTier) {
         self.dataSource = dataSource
         self.configuration = configuration
@@ -69,7 +77,7 @@ class StoriesModel: ObservableObject {
 
     func start() {
         cancellable = publisher.autoconnect().sink(receiveValue: { _ in
-            guard self.numberOfStories > 0 else {
+            guard self.currentStory != nil, self.numberOfStories > 0 else {
                 return
             }
 
@@ -221,7 +229,7 @@ class StoriesModel: ObservableObject {
         guard let assets = sharingAssets() else { return }
 
         pause()
-        EndOfYear().share(assets: assets, storyIdentifier: currentStoryIdentifier, onDismiss: { [weak self] in
+        EndOfYear.share(assets: assets, model: self, storyIdentifier: currentStoryIdentifier, onDismiss: { [weak self] in
             self?.start()
         })
     }
@@ -234,6 +242,38 @@ class StoriesModel: ObservableObject {
     func shouldShowUpsell() -> Bool {
         currentStoryIsPlus && activeTier() == .none
     }
+
+    func paywallView() -> some View {
+        dataSource.paywallView()
+    }
+
+    func overlaidShareView() -> AnyView? {
+        dataSource.overlaidShareView()
+    }
+
+    func footerShareView() -> AnyView? {
+        dataSource.footerShareView()
+    }
+
+    var indicatorColor: Color {
+        dataSource.indicatorColor
+    }
+
+    var indicatorStyle: StoryIndicatorStyle {
+        dataSource.indicatorStyle
+    }
+
+    var primaryBackgroundColor: Color {
+        dataSource.primaryBackgroundColor
+    }
+
+    func sharingSnapshotModifier(_ view: AnyView) -> AnyView {
+        dataSource.sharingSnapshotModifier(view)
+    }
+
+    func shouldShowDismissButton() -> Bool {
+        configuration.shouldShowDismissButton
+    }
 }
 
 private extension StoriesModel {
@@ -243,6 +283,10 @@ private extension StoriesModel {
             case .replay:
                 NotificationCenter.default.addObserver(forName: NSNotification.Name(rawValue: controller.rawValue), object: nil, queue: .main) { [weak self] _ in
                     self?.replay()
+                }
+            case .share:
+                NotificationCenter.default.addObserver(forName: NSNotification.Name(rawValue: controller.rawValue), object: nil, queue: .main) { [weak self] _ in
+                    self?.share()
                 }
             }
         }

@@ -1,4 +1,5 @@
 import UIKit
+import PocketCastsUtils
 
 class DownloadFilterOverlayController: FilterSettingsOverlayController, UITableViewDataSource, UITableViewDelegate {
     private static let downloadCellId = "RadioButtonCellId"
@@ -14,7 +15,9 @@ class DownloadFilterOverlayController: FilterSettingsOverlayController, UITableV
 
     override func viewDidLoad() {
         super.viewDidLoad()
-
+        if FeatureFlag.playlistsRebranding.enabled {
+            largeTitleFont = UIFont.systemFont(ofSize: 22, weight: .bold)
+        }
         tableView.delegate = self
         tableView.dataSource = self
 
@@ -27,7 +30,28 @@ class DownloadFilterOverlayController: FilterSettingsOverlayController, UITableV
         tableView.contentInsetAdjustmentBehavior = .never
         setCurrentDownloadStatus()
         navigationController?.navigationBar.setValue(true, forKey: "hidesShadow")
-        addCloseButton()
+
+        if FeatureFlag.playlistsRebranding.enabled {
+            navigationItem.largeTitleDisplayMode = .always
+
+            handleThemeChanged()
+
+            saveButton.setTitle(L10n.playlistSmartRuleSaveButton, for: .normal)
+        } else {
+            addCloseButton()
+        }
+    }
+
+    override func addTableViewHeader() {
+        let headerView = ThemeableView()
+        headerView.style = .primaryUi01
+        if FeatureFlag.playlistsRebranding.enabled {
+            headerView.frame = CGRect(x: 0, y: 0, width: tableView.bounds.width, height: 10)
+        } else {
+            headerView.frame = CGRect(x: 0, y: 0, width: tableView.bounds.width, height: 26)
+        }
+        headerView.layoutIfNeeded()
+        tableView.tableHeaderView = headerView
     }
 
     // MARK: - TableView DataSource
@@ -46,8 +70,13 @@ class DownloadFilterOverlayController: FilterSettingsOverlayController, UITableV
         cell.title.text = titleForRow(row: row)
         cell.title.setLetterSpacing(-0.2)
         cell.setSelectState(selectedRow == row)
-        let filterTintColor = filterToEdit.playlistColor()
-        cell.setTintColor(color: filterTintColor)
+        if FeatureFlag.playlistsRebranding.enabled {
+            cell.title.font = .systemFont(ofSize: 17, weight: .semibold)
+            cell.setTintColor(color: AppTheme.colorForStyle(.primaryInteractive01))
+        } else {
+            cell.title.font = .systemFont(ofSize: 16, weight: .medium)
+            cell.setTintColor(color: filterToEdit.playlistColor())
+        }
         cell.style = .primaryUi01
         cell.selectButton.tag = indexPath.row
         cell.selectButton.addTarget(self, action: #selector(selectButtonTapped), for: .touchUpInside)
@@ -60,7 +89,7 @@ class DownloadFilterOverlayController: FilterSettingsOverlayController, UITableV
     }
 
     func tableView(_ tableView: UITableView, heightForRowAt indexPath: IndexPath) -> CGFloat {
-        51
+        FeatureFlag.playlistsRebranding.enabled ? 46 : 51
     }
 
     // MARK: - Helper functions
@@ -76,6 +105,9 @@ class DownloadFilterOverlayController: FilterSettingsOverlayController, UITableV
         case .notDownloaded:
             filterToEdit.filterDownloaded = false
             filterToEdit.filterNotDownloaded = true
+        }
+        if FeatureFlag.playlistsRebranding.enabled {
+            filterToEdit.downloadStatusSmartRuleApplied = true
         }
         super.saveFilter()
     }
@@ -105,6 +137,23 @@ class DownloadFilterOverlayController: FilterSettingsOverlayController, UITableV
             return L10n.statusDownloaded
         case .notDownloaded:
             return L10n.statusNotDownloaded
+        }
+    }
+
+    override func handleThemeChanged() {
+        super.handleThemeChanged()
+
+        if FeatureFlag.playlistsRebranding.enabled {
+            saveButton.backgroundColor = AppTheme.colorForStyle(.primaryInteractive01)
+            changeNavTint(titleColor: AppTheme.colorForStyle(.primaryText01), iconsColor: AppTheme.colorForStyle(.primaryIcon03), backgroundColor: AppTheme.viewBackgroundColor())
+        }
+    }
+
+    override func dismissViewController() {
+        if FeatureFlag.playlistsRebranding.enabled {
+            navigationController?.popViewController(animated: true)
+        } else {
+            dismiss(animated: true, completion: nil)
         }
     }
 }

@@ -1,18 +1,59 @@
 import PocketCastsServer
 import PocketCastsUtils
+import PocketCastsDataModel
 
 extension AppDelegate {
     private var shouldRegisterAdapters: Bool {
-        UIApplication.shared.isProtectedDataAvailable && !Settings.analyticsOptOut() && !Analytics.shared.adaptersRegistered
+        UIApplication.shared.isProtectedDataAvailable && !Analytics.shared.adaptersRegistered
     }
 
     func setupAnalytics() {
-        // Only setup if protected data is available, the user hasn't opted out, and we aren't already registered
         guard shouldRegisterAdapters else {
             return
         }
 
-        Analytics.register(adapters: [AnalyticsLoggingAdapter(), TracksAdapter(), CrashLoggingAdapter()])
+        var adapters: [AnalyticsAdapter] = []
+
+        // Only setup if protected data is available, the user hasn't opted out, and we aren't already registered
+        if !Settings.analyticsOptOut() {
+            adapters = [AnalyticsLoggingAdapter(), TracksAdapter(), CrashLoggingAdapter()]
+        }
+
+        adapters.append(NotificationsCoordinator.shared)
+
+        if FeatureFlag.userSatisfactionSurvey.enabled {
+            adapters.append(UserSatisfactionSurveyManager.shared)
+        }
+
+        Analytics.register(adapters: adapters)
+        Analytics.add(analyticsAppThemeProvider: AnalyticsAppThemeProvider())
+    }
+
+    func logActiveDownloadTasks() {
+        Task {
+            let tasks = await DownloadManager.shared.allTasks()
+
+            let properties: [String: Any?] =  ["tasks_count": tasks.count]
+
+            Analytics.track(.episodeDownloadTasks, properties: properties.compactMapValues({ $0 }))
+        }
+    }
+
+    func logStaleDownloads() {
+        let failedDownloadCount = DataManager.sharedManager.failedDownloadedEpisodesCount()
+
+        guard failedDownloadCount > 0 else {
+            return
+        }
+
+        let oldestFailedDownload = DataManager.sharedManager.oldestFailedEpisodeDownload()
+        let newestFailedDownload = DataManager.sharedManager.newestFailedEpisodeDownload()
+
+        let properties: [String: Any?] =  ["failed_download_count": failedDownloadCount,
+                                           "oldest_failed_download": oldestFailedDownload?.formatted(.iso8601),
+                                           "newest_failed_download": newestFailedDownload?.formatted(.iso8601)]
+
+        Analytics.track(.episodeDownloadsStale, properties: properties.compactMapValues({ $0 }))
     }
 
     func addAnalyticsObservers() {

@@ -148,69 +148,6 @@ class AppTheme {
         }
     }
 
-    class func howToFiles1ImageName() -> String {
-        switch Theme.sharedTheme.activeTheme {
-        case .light, .classic:
-            return "Files-How-To-Sheet-01-Light"
-        case .dark, .radioactive:
-            return "Files-How-To-Sheet-01-Dark"
-        case .extraDark:
-            return "Files-How-To-Sheet-01-ExtraDark"
-        case .electric:
-            return "Files-How-To-Sheet-01-Electricity"
-        case .rosé:
-            return "Files-How-To-Sheet-01-Rose"
-        case .indigo:
-            return "Files-How-To-Sheet-01-Indigo"
-        case .contrastLight:
-            return "Files-How-To-Sheet-01-ContrastLight"
-        case .contrastDark:
-            return "Files-How-To-Sheet-01-ContrastDark"
-        }
-    }
-
-    class func howToFiles2ImageName() -> String {
-        switch Theme.sharedTheme.activeTheme {
-        case .light, .classic:
-            return "Files-How-To-Sheet-02-Light"
-        case .dark, .radioactive:
-            return "Files-How-To-Sheet-02-Dark"
-        case .extraDark:
-            return "Files-How-To-Sheet-02-ExtraDark"
-        case .electric:
-            return "Files-How-To-Sheet-02-Electricity"
-        case .indigo:
-            return "Files-How-To-Sheet-02-Indigo"
-        case .rosé:
-            return "Files-How-To-Sheet-02-Rose"
-        case .contrastLight:
-            return "Files-How-To-Sheet-02-ContrastLight"
-        case .contrastDark:
-            return "Files-How-To-Sheet-02-ContrastDark"
-        }
-    }
-
-    class func howToFiles3ImageName() -> String {
-        switch Theme.sharedTheme.activeTheme {
-        case .light, .classic:
-            return "Files-How-To-Sheet-03-Light"
-        case .dark, .radioactive:
-            return "Files-How-To-Sheet-03-Dark"
-        case .extraDark:
-            return "Files-How-To-Sheet-03-ExtraDark"
-        case .electric:
-            return "Files-How-To-Sheet-03-Electricity"
-        case .indigo:
-            return "Files-How-To-Sheet-03-Indigo"
-        case .rosé:
-            return "Files-How-To-Sheet-03-Rose"
-        case .contrastLight:
-            return "Files-How-To-Sheet-03-ContrastLight"
-        case .contrastDark:
-            return "Files-How-To-Sheet-03-ContrastDark"
-        }
-    }
-
     class func noConnectionImageName() -> String {
         switch Theme.sharedTheme.activeTheme {
         case .dark, .extraDark:
@@ -539,8 +476,8 @@ class AppTheme {
         }
     }
 
-    static func socialIconAppleImageName() -> String {
-        switch Theme.sharedTheme.activeTheme {
+    static func socialIconAppleImageName(theme: Theme = .sharedTheme) -> String {
+        switch theme.activeTheme {
         case .dark, .extraDark, .electric, .radioactive, .contrastDark:
             return "sso-icon-apple-dark"
         case .light, .classic, .indigo, .rosé, .contrastLight:

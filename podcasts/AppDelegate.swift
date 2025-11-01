@@ -1,11 +1,13 @@
 import BackgroundTasks
+import AutomatticRemoteLogging
 import Firebase
 import FirebasePerformance
 import Foundation
 import PocketCastsDataModel
 import PocketCastsServer
 import PocketCastsUtils
-import StoreKit
+import Combine
+import Sentry
 
 class AppDelegate: UIResponder, UIApplicationDelegate {
     private static let initialRefreshDelay = 2.seconds
@@ -25,8 +27,9 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     lazy var appLifecycleAnalytics = AppLifecycleAnalytics()
 
     private var backgroundSignOutListener: BackgroundSignOutListener?
+    private(set) var appInstallState: AppLifecycleAnalytics.AppInstallState?
 
-    var whatsNew: WhatsNew?
+    lazy var whatsNew: WhatsNew = WhatsNew()
 
     // MARK: - App Lifecycle
 
@@ -34,12 +37,38 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         configureFirebase()
         TraceManager.shared.setup(handler: traceHandler)
 
-        setupWhatsNew()
-
         setupSecrets()
         addAnalyticsObservers()
         setupAnalytics()
-        appLifecycleAnalytics.checkApplicationInstalledOrUpgraded()
+
+        DataManager.logger = SentryLogger()
+
+        appInstallState = appLifecycleAnalytics.checkApplicationInstalledOrUpgraded()
+
+        if let appInstallState {
+            switch appInstallState {
+            case .updated:
+                Settings.notificationsNewEpisodes = UserDefaults.standard.bool(forKey: Constants.UserDefaults.pushEnabled)
+
+                if FeatureFlag.encourageAccountCreation.enabled, !Settings.hasShownInformationalViewModal {
+                    Settings.shouldShowInitialOnboardingFlow = !SyncManager.isUserLoggedIn()
+                }
+                if FeatureFlag.playlistsRebranding.enabled {
+                    Settings.shouldShowNewFilterTip = false
+                    Settings.shouldShowNewFilterTipInCreationView = false
+                }
+            case .installed:
+                //Never show the podcast feed reload tooltip for fresh install
+                Settings.shouldShowPodcastFeeReloadTip = false
+                Settings.shouldShowPodcastViewChangesTip = false
+                Settings.shouldShowRecentlyPlayedSortingTip = false
+                if FeatureFlag.playlistsRebranding.enabled {
+                    Settings.shouldShowPlaylistsOnboarding = false
+                }
+            case .sameVersion:
+                break
+            }
+        }
 
         let defaults = UserDefaults.standard
 
@@ -53,45 +82,57 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 
         GoogleCastManager.sharedManager.setup()
 
-        CacheServerHandler.newShowNotesEndpoint = FeatureFlag.newShowNotesEndpoint.enabled
-        CacheServerHandler.episodeFeedArtwork = FeatureFlag.episodeFeedArtwork.enabled
-
         setupRoutes()
 
-        DataManager.sharedManager.bookmarksEnabled = FeatureFlag.bookmarks.enabled
-
-        ServerConfig.shared.syncDelegate = ServerSyncManager.shared
-        ServerConfig.shared.playbackDelegate = PlaybackManager.shared
-        checkDefaults()
-
-        NotificationsHelper.shared.handleAppLaunch()
+        NotificationsHelper.shared.register(checkToken: false)
 
         DispatchQueue.global().async { [weak self] in
-            self?.postLaunchSetup()
-            self?.checkIfRestoreCleanupRequired()
+            guard let self else {
+                return
+            }
+
+            ServerConfig.shared.syncDelegate = ServerSyncManager.shared
+            ServerConfig.shared.playbackDelegate = PlaybackManager.shared
+            checkDefaults()
+
+            logActiveDownloadTasks()
+            logStaleDownloads()
+            postLaunchSetup()
+            checkIfRestoreCleanupRequired()
+
             ImageManager.sharedManager.updatePodcastImagesIfRequired()
             WidgetHelper.shared.cleanupAppGroupImages()
+            SiriShortcutsManager.shared.setup()
+
+            if FeatureFlag.downloadFixes.enabled {
+                DownloadManager.shared.startAllQueued()
+            }
+
+            if FeatureFlag.enableLocalizationHeaders.enabled {
+                LocalizationHelper.provider = InternationalizationProvider(userRegion: Settings.userRegion())
+            }
         }
 
         badgeHelper.setup()
         WatchManager.shared.setup()
-        SiriShortcutsManager.shared.setup()
         shortcutManager.listenForShortcutChanges()
 
         setupBackgroundRefresh()
 
-        SKPaymentQueue.default().add(IapHelper.shared)
-
-        // Request the IAP products on launch
-        if SubscriptionHelper.hasActiveSubscription() == false {
-            IapHelper.shared.requestProductInfo()
-        }
+        IAPHelper.shared.setup(hasSubscription: SubscriptionHelper.hasActiveSubscription())
 
         NotificationCenter.default.addObserver(self, selector: #selector(handleThemeChanged), name: Constants.Notifications.themeChanged, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(hideOverlays), name: Constants.Notifications.openingNonOverlayableWindow, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(showOverlays), name: Constants.Notifications.closedNonOverlayableWindow, object: nil)
 
         setupSignOutListener()
+
+        if FeatureFlag.earlyReloadSubscriptionStatus.enabled,
+           SyncManager.isUserLoggedIn(),
+           appInstallState == .updated {
+            ApiServerHandler.shared.retrieveSubscriptionStatus()
+            FileLog.shared.addMessage("Reload subscription status early as the app updated")
+        }
 
         return true
     }
@@ -125,8 +166,10 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
                 RefreshManager.shared.refreshPodcasts()
             })
         } else {
-            PodcastManager.shared.checkForPendingAndAutoDownloads()
-            UserEpisodeManager.checkForPendingUploads()
+            DispatchQueue.global(qos: .userInitiated).async {
+                PodcastManager.shared.checkForPendingAndAutoDownloads()
+                UserEpisodeManager.checkForPendingUploads()
+            }
         }
         PlaybackManager.shared.updateIdleTimer()
     }
@@ -164,7 +207,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         badgeHelper.teardown()
         shortcutManager.stopListeningForShortcutChanges()
 
-        SKPaymentQueue.default().remove(IapHelper.shared)
+        IAPHelper.shared.tearDown()
         UIApplication.shared.endReceivingRemoteControlEvents()
     }
 
@@ -172,7 +215,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         NavigationManager.sharedManager.miniPlayer
     }
 
-    func openEpisode(_ episodeUuid: String, from podcast: Podcast) {
+    func openEpisode(_ episodeUuid: String, from podcast: Podcast, timestamp: TimeInterval? = nil) {
         DispatchQueue.main.async {
             self.hideProgressDialog()
 
@@ -183,8 +226,12 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 
                 return
             }
+            var data: [String: Any] = [NavigationManager.episodeUuidKey: episode.uuid]
+            if let timestamp {
+                data[NavigationManager.episodeTimestamp] = timestamp
+            }
 
-            NavigationManager.sharedManager.navigateTo(NavigationManager.episodePageKey, data: [NavigationManager.episodeUuidKey: episode.uuid])
+            NavigationManager.sharedManager.navigateTo(NavigationManager.episodePageKey, data: data as NSDictionary)
         }
     }
 
@@ -270,51 +317,44 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     private func configureFirebase() {
         FirebaseApp.configure()
 
-        // we user remote config for varies parameters in the app we want to be able to set remotely. Here we set the defaults, then fetch new ones
-        let remoteConfig = RemoteConfig.remoteConfig()
-        remoteConfig.setDefaults([
-            Constants.RemoteParams.periodicSaveTimeMs: NSNumber(value: Constants.RemoteParams.periodicSaveTimeMsDefault),
-            Constants.RemoteParams.episodeSearchDebounceMs: NSNumber(value: Constants.RemoteParams.episodeSearchDebounceMsDefault),
-            Constants.RemoteParams.podcastSearchDebounceMs: NSNumber(value: Constants.RemoteParams.podcastSearchDebounceMsDefault),
-            Constants.RemoteParams.customStorageLimitGB: NSNumber(value: Constants.RemoteParams.customStorageLimitGBDefault),
-            Constants.RemoteParams.endOfYearRequireAccount: NSNumber(value: Constants.RemoteParams.endOfYearRequireAccountDefault),
-            Constants.RemoteParams.effectsPlayerStrategy: NSNumber(value: Constants.RemoteParams.effectsPlayerStrategyDefault),
-            Constants.RemoteParams.patronEnabled: NSNumber(value: Constants.RemoteParams.patronEnabledDefault),
-            Constants.RemoteParams.patronCloudStorageGB: NSNumber(value: Constants.RemoteParams.patronCloudStorageGBDefault),
-            Constants.RemoteParams.bookmarksEnabled: NSNumber(value: Constants.RemoteParams.bookmarksEnabledDefault),
-            Constants.RemoteParams.addMissingEpisodes: NSNumber(value: Constants.RemoteParams.addMissingEpisodesDefault),
-            Constants.RemoteParams.newPlayerTransition: NSNumber(value: Constants.RemoteParams.newPlayerTransitionDefault),
-        ])
-
-        remoteConfig.fetch(withExpirationDuration: 2.hour) { [weak self] status, _ in
-            if status == .success {
-                remoteConfig.activate(completion: nil)
-
-                self?.updateEndOfYearRemoteValue()
-                self?.updateRemoteFeatureFlags()
-            }
+        FirebaseManager.refreshRemoteConfig() { [weak self] status in
+            self?.updateEndOfYearRemoteValue()
+            self?.updateRemoteFeatureFlags()
+            ServerConfig.avoidLogoutOnError = FeatureFlag.errorLogoutHandling.enabled
+            ServerConfig.avoidLogoutInBackground = FeatureFlag.avoidLogoutInBackground.enabled
         }
     }
 
-    private func updateRemoteFeatureFlags() {
-        #if !DEBUG
-        do {
-            try FeatureFlagOverrideStore().override(FeatureFlag.patron, withValue: Settings.patronEnabled)
-            try FeatureFlagOverrideStore().override(FeatureFlag.bookmarks, withValue: Settings.remoteBookmarksEnabled)
+    func updateRemoteFeatureFlags(forceReload: Bool = false) {
+        guard BuildEnvironment.current != .debug || forceReload else { return }
 
-            if FeatureFlag.newPlayerTransition.enabled != Settings.newPlayerTransition {
-                // If the player transition changes we dismiss the full screen player
-                // Otherwise this might lead to crashes or weird behavior
-                appDelegate()?.miniPlayer()?.closeFullScreenPlayer()
-                try FeatureFlagOverrideStore().override(FeatureFlag.newPlayerTransition, withValue: Settings.newPlayerTransition)
-            }
-
-            // If the flag is off and we're turning it on we won't have the product info yet so we'll ask for them again
-            IapHelper.shared.requestProductInfoIfNeeded()
-        } catch {
-            FileLog.shared.addMessage("Failed to set remote feature flag: \(error)")
+        if FeatureFlag.errorLogoutHandling.enabled != Settings.errorLogoutHandling {
+            ServerConfig.avoidLogoutOnError = FeatureFlag.errorLogoutHandling.enabled
+            try? FeatureFlagOverrideStore().override(FeatureFlag.errorLogoutHandling, withValue: Settings.errorLogoutHandling)
         }
-        #endif
+
+        if FeatureFlag.newSettingsStorage.enabled != Settings.newSettingsStorage {
+            if FeatureFlag.newSettingsStorage.enabled {
+                SettingsStore.appSettings.importUserDefaults()
+                DataManager.sharedManager.importPodcastSettings()
+            }
+        }
+
+        try? FeatureFlagOverrideStore().override(FeatureFlag.slumber, withValue: Settings.slumberPromoCode?.isEmpty == false)
+
+        FeatureFlag.allCases.forEach { flag in
+            if let remoteKey = flag.remoteKey {
+                let remoteValue = RemoteConfig.remoteConfig().configValue(forKey: remoteKey)
+                if remoteValue.source == .remote {
+                    do {
+                        FileLog.shared.console("Override \(flag): \(remoteValue.boolValue)")
+                        try FeatureFlagOverrideStore().override(flag, withValue: remoteValue.boolValue)
+                    } catch {
+                        FileLog.shared.addMessage("Failed to set remote feature flag \(flag): \(error)")
+                    }
+                }
+            }
+        }
     }
 
     private func updateEndOfYearRemoteValue() {
@@ -324,10 +364,12 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 
     private func postLaunchSetup() {
         if !UserDefaults.standard.bool(forKey: "CreatedDefPlaylistsV2") {
-            PlaylistManager.createDefaultFilters()
+            PlaylistManager.createDefaultPlaylists()
             UserDefaults.standard.set(true, forKey: "CreatedDefPlaylistsV2")
         }
-        DownloadManager.shared.clearStuckDownloads()
+        Task {
+            await DownloadManager.shared.clearStuckDownloads()
+        }
     }
 
     private func checkIfRestoreCleanupRequired() {
@@ -368,7 +410,8 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     func application(_ application: UIApplication, configurationForConnecting connectingSceneSession: UISceneSession, options: UIScene.ConnectionOptions) -> UISceneConfiguration {
         let role = connectingSceneSession.role
 
-        if role == UISceneSession.Role.carTemplateApplication {
+        if role == .carTemplateApplication {
+            FileLog.shared.addMessage("AppDelegate: CarPlay isConnected")
             return UISceneConfiguration(name: "Pocket Casts Car", sessionRole: UISceneSession.Role.carTemplateApplication)
         }
 
@@ -379,6 +422,11 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         // Called when the user discards a scene session.
         // If any sessions were discarded while the application was not running, this will be called shortly after application:didFinishLaunchingWithOptions.
         // Use this method to release any resources that were specific to the discarded scenes, as they will not return.
+        let includesCarPlay = sceneSessions.contains(where: { $0.role == .carTemplateApplication })
+
+        if includesCarPlay {
+            FileLog.shared.addMessage("AppDelegate: CarPlay didDiscard")
+        }
     }
 
     // MARK: Secrets
@@ -394,10 +442,21 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 
         backgroundSignOutListener = BackgroundSignOutListener(presentingViewController: SceneHelper.rootViewController())
     }
+}
 
-    // MARK: What's New
+struct SentryLogger: ErrorLogger {
+    func log(error: Error, context: [String: String]?) {
+        if BuildEnvironment.current == .appStore {
+            let crumb = Breadcrumb()
+            crumb.level = SentryLevel.info
+            crumb.category = "grdb"
+            crumb.message = error.localizedDescription
+            SentrySDK.addBreadcrumb(crumb)
+            return
+        }
 
-    private func setupWhatsNew() {
-        whatsNew = WhatsNew()
+    #if os(iOS)
+    CrashLoggingAdapter.sharedManager?.crashLogging?.logError(error, tags: context ?? [:], level: .warning)
+    #endif
     }
 }

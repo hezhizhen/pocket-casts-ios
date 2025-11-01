@@ -3,7 +3,8 @@ import PocketCastsDataModel
 
 class BookmarkEditTitleViewController: ThemedHostingController<BookmarkEditTitleView> {
     private let viewModel: BookmarkEditViewModel
-    let onDismiss: ((String) -> Void)?
+    let onDismiss: ((String, Bool) -> Void)?
+    var editSaved: Bool = false
 
     var source: BookmarkAnalyticsSource = .unknown {
         didSet {
@@ -14,7 +15,7 @@ class BookmarkEditTitleViewController: ThemedHostingController<BookmarkEditTitle
     init(manager: BookmarkManager,
          bookmark: Bookmark,
          state: BookmarkEditViewModel.EditState,
-         onDismiss: ((String) -> Void)? = nil) {
+         onDismiss: ((String, Bool) -> Void)? = nil) {
         let viewModel = BookmarkEditViewModel(manager: manager, bookmark: bookmark, state: state)
         self.viewModel = viewModel
         self.onDismiss = onDismiss
@@ -28,7 +29,15 @@ class BookmarkEditTitleViewController: ThemedHostingController<BookmarkEditTitle
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
 
+        Analytics.track(.bookmarkEditFormShown, properties: ["source": source.rawValue])
         viewModel.viewDidAppear()
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        if !editSaved {
+            Analytics.track(.bookmarkEditFormDismissed, properties: ["source": source.rawValue])
+        }
     }
 
     @MainActor required dynamic init?(coder aDecoder: NSCoder) {
@@ -39,11 +48,13 @@ class BookmarkEditTitleViewController: ThemedHostingController<BookmarkEditTitle
 extension BookmarkEditTitleViewController: BookmarkEditRouter {
     func dismiss() {
         dismiss(animated: true)
-        onDismiss?(viewModel.originalTitle)
+        onDismiss?(viewModel.originalTitle, true)
     }
 
     func titleUpdated(title: String) {
+        editSaved = true
+        Analytics.track(.bookmarkEditFormSubmitted, properties: ["source": source.rawValue])
         dismiss(animated: true)
-        onDismiss?(title)
+        onDismiss?(title, false)
     }
 }

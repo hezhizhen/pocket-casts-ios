@@ -83,7 +83,7 @@ class EpisodeCell: ThemeableSwipeCell, MainEpisodeActionViewDelegate {
     var playlist: AutoplayHelper.Playlist?
 
     private var inUpNext = false
-    private var filterUuid: String?
+    private var playlistUuid: String?
     private var podcastUuid: String?
     private var listUuid: String?
     private var mainTintColor: UIColor? {
@@ -93,6 +93,10 @@ class EpisodeCell: ThemeableSwipeCell, MainEpisodeActionViewDelegate {
     }
 
     private var episode: BaseEpisode?
+
+    private var isSelectableForMultiSelect: Bool {
+        !(episode?.wasDeleted ?? false)
+    }
 
     // MARK: - Setup
 
@@ -150,17 +154,20 @@ class EpisodeCell: ThemeableSwipeCell, MainEpisodeActionViewDelegate {
             selectView.isHidden = !isMultiSelectEnabled
             setNeedsLayout()
         }
-        if actionButton.isHidden == !isMultiSelectEnabled {
-            actionButton.isHidden = isMultiSelectEnabled
+        let wasDeleted = episode?.wasDeleted ?? false
+        let shouldHide = isMultiSelectEnabled || wasDeleted
+
+        if actionButton.isHidden != shouldHide {
+            actionButton.isHidden = shouldHide
             setNeedsLayout()
         }
     }
 
     // MARK: - Populate Method
 
-    func populateFrom(episode: BaseEpisode, tintColor: UIColor?, filterUuid: String? = nil, podcastUuid: String? = nil, listUuid: String? = nil) {
+    func populateFrom(episode: BaseEpisode, tintColor: UIColor?, playlistUuid: String? = nil, podcastUuid: String? = nil, listUuid: String? = nil) {
         self.episode = episode
-        self.filterUuid = filterUuid
+        self.playlistUuid = playlistUuid
         self.podcastUuid = podcastUuid
         self.listUuid = listUuid
         mainTintColor = tintColor ?? ThemeColor.primaryIcon01()
@@ -171,7 +178,7 @@ class EpisodeCell: ThemeableSwipeCell, MainEpisodeActionViewDelegate {
 
     /// Determines whether the bookmark indicator icon should appear
     private var showBookmarksIcon: Bool {
-        FeatureFlag.bookmarks.enabled && PaidFeature.bookmarks.isUnlocked && episode?.hasBookmarks == true
+        PaidFeature.bookmarks.isUnlocked && episode?.hasBookmarks == true
     }
 
     private func populate(progressOnly: Bool) {
@@ -202,7 +209,7 @@ class EpisodeCell: ThemeableSwipeCell, MainEpisodeActionViewDelegate {
             bookmarkIcon.tintColor = mainTintColor
             bookmarkIcon.isHidden = !showBookmarksIcon
 
-            let hideStatus = !episode.archived && !episode.downloaded(pathFinder: DownloadManager.shared) && !episode.downloadFailed() && !uploadFailed && !episode.playbackError()
+            let hideStatus = !episode.archived && !episode.wasDeleted && !episode.downloaded(pathFinder: DownloadManager.shared) && !episode.downloadFailed() && !uploadFailed && !episode.playbackError()
             if !hideStatus {
                 let statusImage: UIImage?
                 if episode.downloadFailed() || uploadFailed || episode.playbackError() {
@@ -215,8 +222,12 @@ class EpisodeCell: ThemeableSwipeCell, MainEpisodeActionViewDelegate {
                     if showBookmarksIcon {
                         statusImage = UIImage(named: "bookmark-icon-episode")?.tintedImage(mainTintColor ?? ThemeColor.primaryIcon02())
                         bookmarkIcon.image = UIImage(named: "list_archived")?.tintedImage(ThemeColor.primaryIcon02())
-                    } else {
+                    } else if episode.wasDeleted {
+                        statusImage = UIImage(named: "option-cross-circle")?.tintedImage(ThemeColor.primaryIcon02())
+                    } else if episode.archived {
                         statusImage = UIImage(named: "list_archived")?.tintedImage(ThemeColor.primaryIcon02())
+                    } else {
+                        statusImage = nil
                     }
                 }
                 statusIndicator.image = statusImage
@@ -242,7 +253,7 @@ class EpisodeCell: ThemeableSwipeCell, MainEpisodeActionViewDelegate {
                 }
             }
 
-            if episode.played() || episode.archived {
+            if episode.played() || episode.archived || episode.wasDeleted {
                 episodeImage.alpha = EpisodeCell.playedAlpha
                 contentStackView.alpha = EpisodeCell.playedAlpha
             } else {
@@ -255,7 +266,10 @@ class EpisodeCell: ThemeableSwipeCell, MainEpisodeActionViewDelegate {
 
         EpisodeDateHelper.setDate(episode: episode, on: dayName, tintColor: mainTintColor)
 
-        if episode.archived {
+        if episode.wasDeleted {
+            informationLabel.text = L10n.podcastUnavailable + " • " + episode.displayableInfo(includeSize: false)
+        }
+        else if episode.archived {
             informationLabel.text = L10n.podcastArchived + " • " + episode.displayableInfo(includeSize: false)
         } else if let userEpisode = episode as? UserEpisode {
             informationLabel.text = userEpisode.displayableInfo(includeSize: Settings.primaryRowAction() == .download)
@@ -286,7 +300,14 @@ class EpisodeCell: ThemeableSwipeCell, MainEpisodeActionViewDelegate {
             uploadProgressIndicator.isHidden = true
         }
 
-        actionButton.populateFrom(episode: episode)
+        if episode.wasDeleted {
+            actionButton.isHidden = true
+        } else {
+            actionButton.isHidden = false
+            actionButton.populateFrom(episode: episode)
+        }
+
+        updateMultiSelectAppearance()
 
         isAccessibilityElement = true
         accessibilityLabel = labelForAccessibility(episode: episode)
@@ -368,12 +389,12 @@ class EpisodeCell: ThemeableSwipeCell, MainEpisodeActionViewDelegate {
         guard let newEpisode = DataManager.sharedManager.findBaseEpisode(uuid: episodeUuid) else { return }
 
         if Thread.isMainThread {
-            populateFrom(episode: newEpisode, tintColor: mainTintColor, filterUuid: filterUuid, podcastUuid: podcastUuid)
+            populateFrom(episode: newEpisode, tintColor: mainTintColor, playlistUuid: playlistUuid, podcastUuid: podcastUuid)
         } else {
             DispatchQueue.main.async { [weak self] in
                 guard let self = self else { return }
 
-                self.populateFrom(episode: newEpisode, tintColor: self.mainTintColor, filterUuid: self.filterUuid, podcastUuid: self.podcastUuid)
+                self.populateFrom(episode: newEpisode, tintColor: self.mainTintColor, playlistUuid: self.playlistUuid, podcastUuid: self.podcastUuid)
             }
         }
     }
@@ -437,7 +458,7 @@ class EpisodeCell: ThemeableSwipeCell, MainEpisodeActionViewDelegate {
             AnalyticsHelper.podcastEpisodePlayedFromList(listId: listUuid, podcastUuid: podcastUuid)
         }
 
-        PlaybackActionHelper.play(episode: episode, filterUuid: filterUuid, podcastUuid: podcastUuid, playlist: playlist)
+        PlaybackActionHelper.play(episode: episode, playlistUuid: playlistUuid, podcastUuid: podcastUuid, playlist: playlist)
     }
 
     func pauseTapped() {
@@ -447,7 +468,7 @@ class EpisodeCell: ThemeableSwipeCell, MainEpisodeActionViewDelegate {
     func errorTapped() {
         guard let episode = episode else { return }
 
-        let statusBarStyle = filterUuid == nil ? UIStatusBarStyle.lightContent : AppTheme.defaultStatusBarStyle()
+        let statusBarStyle = playlistUuid == nil ? UIStatusBarStyle.lightContent : AppTheme.defaultStatusBarStyle()
         if episode.playbackError() {
             let optionsPicker = OptionsPicker(title: nil)
             let retryAction = OptionAction(label: L10n.retry, icon: nil, action: { [weak self] in
@@ -495,7 +516,7 @@ class EpisodeCell: ThemeableSwipeCell, MainEpisodeActionViewDelegate {
         statusIndicator.isHidden = true
         uploadProgressIndicator.isHidden = true
         uploadStatusIndicator.isHidden = true
-        filterUuid = nil
+        playlistUuid = nil
         podcastUuid = nil
         showTick = false
         shouldShowSelect = false
@@ -506,19 +527,32 @@ class EpisodeCell: ThemeableSwipeCell, MainEpisodeActionViewDelegate {
 
     var shouldShowSelect = false {
         didSet {
-            selectView.isHidden = !shouldShowSelect
-            actionButton.isHidden = shouldShowSelect
+            updateMultiSelectAppearance()
         }
     }
 
     var showTick = false {
         didSet {
+            guard isSelectableForMultiSelect else {
+                selectTickImageView.isHidden = true
+                selectCircleView.layer.borderWidth = 2
+                return
+            }
+
             selectTickImageView.isHidden = !showTick
             selectCircleView.layer.borderWidth = showTick ? 0 : 2
             selectView.accessibilityLabel = showTick ? L10n.accessibilityDeselectEpisode : L10n.accessibilitySelectEpisode
             accessibilityLabel = labelForAccessibility(episode: episode)
             style = showTick ? .primaryUi02Selected : .primaryUi02
             updateColor()
+        }
+    }
+
+    private func updateMultiSelectAppearance() {
+        let isSelectable = isSelectableForMultiSelect
+        selectView.isHidden = !shouldShowSelect || !isSelectable
+        if isSelectable {
+            actionButton.isHidden = shouldShowSelect
         }
     }
 

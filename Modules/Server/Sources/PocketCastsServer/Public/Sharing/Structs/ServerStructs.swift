@@ -1,4 +1,5 @@
 import Foundation
+import PocketCastsDataModel
 
 public struct ImportOpmlResponse: Decodable {
     public var status: String? = nil
@@ -88,7 +89,7 @@ public struct SharedPodcast: Decodable {
     }
 }
 
-public struct PodcastRefreshResponse {
+public struct PodcastRefreshResponse: Decodable {
     public var status: String?
     public var message: String?
     public var result: RefreshResult?
@@ -105,7 +106,7 @@ public struct PodcastRefreshResponse {
     }
 }
 
-public struct RefreshResult {
+public struct RefreshResult: Decodable {
     public var podcastUpdates: [String: [RefreshEpisode]]?
 }
 
@@ -122,6 +123,21 @@ public struct RefreshEpisode: Decodable {
     public var seasonNumber: Int64?
     public var episodeNumber: Int64?
     public var publishedDate: String?
+
+    enum CodingKeys: String, CodingKey {
+        case title
+        case uuid
+        case url
+        case episodeDescription = "description"
+        case detailedDescription = "dd"
+        case fileType
+        case sizeInBytes
+        case duration = "durationInSecs"
+        case episodeType = "epType"
+        case seasonNumber = "epSeason"
+        case episodeNumber = "epNumber"
+        case publishedDate = "publishedAt"
+    }
 }
 
 public struct PodcastSearchResponse: Decodable {
@@ -196,6 +212,7 @@ public struct EpisodeSyncInfo {
     public var playedUpTo: Int?
     public var isArchived: Bool?
     public var starred: Bool?
+    public var deselectedChapters: String?
 }
 
 public struct PodcastSyncInfo {
@@ -205,6 +222,7 @@ public struct PodcastSyncInfo {
     var dateAdded: Date?
     var sortPosition: Int32?
     var folderUuid: String?
+    var settings: PodcastSettings?
 }
 
 public struct FolderSyncInfo {
@@ -238,18 +256,25 @@ public struct DiscoverRegion: Decodable {
     public var flag: String
 }
 
-public struct DiscoverItem: Decodable {
+public struct DiscoverItem: Decodable, Equatable {
+    public var id: String?
     public var uuid: String?
     public var title: String?
     public var type: String?
     public var summaryStyle: String?
     public var expandedStyle: String?
+    public var summaryItemCount: Int?
     public var source: String?
+    public var authenticated: Bool?
     public var sponsoredPodcasts: [CarouselSponsoredPodcast]?
     public var expandedTopItemLabel: String?
     public var curated: Bool?
     public var regions: [String]
     public var isSponsored: Bool?
+    public var popular: [Int]?
+    public var categoryID: Int?
+    public var dateTime: String?
+    public var sponsoredCategoryIDs: [Int]?
 
     public enum CodingKeys: String, CodingKey {
         case summaryStyle = "summary_style"
@@ -257,11 +282,63 @@ public struct DiscoverItem: Decodable {
         case isSponsored = "sponsored"
         case sponsoredPodcasts = "sponsored_podcasts"
         case expandedTopItemLabel = "expanded_top_item_label"
-        case type, title, source, regions, curated, uuid
+        case categoryID = "category_id"
+        case dateTime = "datetime"
+        case sponsoredCategoryIDs = "sponsored_ids"
+        case type, title, source, regions, curated, uuid, popular, id, authenticated
+    }
+
+    public init(
+        id: String? = nil,
+        uuid: String? = nil,
+        title: String? = nil,
+        type: String? = nil,
+        summaryStyle: String? = nil,
+        summaryItemCount: Int? = nil,
+        expandedStyle: String? = nil,
+        source: String? = nil,
+        sponsoredPodcasts: [CarouselSponsoredPodcast]? = nil,
+        expandedTopItemLabel: String? = nil,
+        curated: Bool? = nil,
+        regions: [String],
+        isSponsored: Bool? = nil,
+        popular: [Int]? = nil,
+        categoryID: Int? = nil,
+        authenticated: Bool? = nil,
+        sponsoredCategoryIDs: [Int]? = nil
+    ) {
+        self.id = id
+        self.uuid = uuid
+        self.title = title
+        self.type = type
+        self.summaryStyle = summaryStyle
+        self.summaryItemCount = summaryItemCount
+        self.expandedStyle = expandedStyle
+        self.source = source
+        self.sponsoredPodcasts = sponsoredPodcasts
+        self.expandedTopItemLabel = expandedTopItemLabel
+        self.curated = curated
+        self.regions = regions
+        self.isSponsored = isSponsored
+        self.popular = popular
+        self.categoryID = categoryID
+        self.authenticated = authenticated
+        self.sponsoredCategoryIDs = sponsoredCategoryIDs
+    }
+
+    public var isAuthenticated: Bool {
+        authenticated == true
     }
 }
 
-public struct CarouselSponsoredPodcast: Decodable {
+extension DiscoverItem: Hashable {
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+        hasher.combine(uuid)
+    }
+}
+
+public struct CarouselSponsoredPodcast: Decodable, Equatable {
     public var position: Int?
     public var source: String?
 }
@@ -284,6 +361,7 @@ public struct PodcastList: Decodable {
     public var title: String?
     public var description: String?
     public var podcasts: [DiscoverPodcast]?
+    public let datetime: String?
 }
 
 public struct PodcastCollection: Decodable {
@@ -292,22 +370,30 @@ public struct PodcastCollection: Decodable {
     public var subtitle: String?
     public var author: String?
     public var description: String?
+    public var shortDescription: String?
     public var podcasts: [DiscoverPodcast]?
     public let episodes: [DiscoverEpisode]?
+    public var podroll: [DiscoverPodcast]?
     public var collectionImage: String?
+    public var collectionRectangleImage: String?
     public var colors: PodcastCollectionColors?
     public var webTitle: String?
     public var webUrl: String?
     public var collageImages: [CollageImage]?
     public let headerImage: String?
+    public let featureImage: String?
+    public let datetime: String?
     public enum CodingKeys: String, CodingKey {
         case webUrl = "web_url"
         case webTitle = "web_title"
         case collectionImage = "collection_image"
+        case collectionRectangleImage = "collection_rectangle_image"
         case collageImages = "collage_images"
         case headerImage = "header_image"
         case listId = "list_id"
-        case title, description, subtitle, colors, podcasts, author, episodes
+        case featureImage = "feature_image"
+        case shortDescription = "short_description"
+        case title, description, subtitle, colors, podcasts, author, episodes, podroll, datetime
     }
 }
 
@@ -333,11 +419,32 @@ public struct DiscoverPodcast: Codable, Equatable {
     }
 }
 
-public struct DiscoverCategory: Decodable {
+public struct DiscoverCategory: Decodable, Equatable, Sendable, Hashable {
     public var id: Int?
     public var name: String?
     public var source: String?
     public var icon: String?
+    public var popularity: Int?
+    public var sourceOnboarding: String?
+
+    public init(id: Int?, name: String?) {
+        self.id = id
+        self.name = name
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case source
+        case icon
+        case popularity
+        case sourceOnboarding = "source_onboarding"
+    }
+}
+
+public struct DiscoverSource: Decodable, Equatable {
+    public var source: String?
+    public var authenticated: Bool?
 }
 
 public struct DiscoverCategoryDetails: Decodable {
@@ -355,12 +462,12 @@ public struct DiscoverCategoryPromotion: Decodable {
 }
 
 public struct RemoteStats {
-    var silenceRemovalTime: Int64
-    var totalListenTime: Int64
-    var autoSkipTime: Int64
-    var variableSpeedTime: Int64
-    var skipTime: Int64
-    var startedStatsAt: Int64
+    public var silenceRemovalTime: Int64
+    public var totalListenTime: Int64
+    public var autoSkipTime: Int64
+    public var variableSpeedTime: Int64
+    public var skipTime: Int64
+    public var startedStatsAt: Int64
 }
 
 public struct PodcastCollectionColors: Codable {

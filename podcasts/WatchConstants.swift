@@ -2,6 +2,7 @@ public enum WatchConstants {
     public enum Keys {
         public static let messageVersion = "id"
         public static let loginChanged = "loginChanged"
+        public static let featureFlags = "featureFlags"
 
         public static let filters = "filters"
         public static let nowPlayingInfo = "nowPlaying"
@@ -64,8 +65,8 @@ public enum WatchConstants {
     }
 
     public enum Notifications {
-        public static let dataUpdated = "dataUpdated"
-        public static let loginStatusUpdated = "loginStatusUpdated"
+        public static let dataUpdated = NSNotification.Name(rawValue: "dataUpdated")
+        public static let loginStatusUpdated = NSNotification.Name(rawValue: "loginStatusUpdated")
     }
 
     public enum Interface {

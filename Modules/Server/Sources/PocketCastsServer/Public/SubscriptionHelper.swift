@@ -1,7 +1,20 @@
 import UIKit
+import PocketCastsUtils
 
 open class SubscriptionHelper: NSObject {
     public static let shared = SubscriptionHelper()
+
+    public static var hasCancelledSubscription: Bool {
+        let renewing = SubscriptionHelper.hasRenewingSubscription()
+        let giftDays = SubscriptionHelper.subscriptionGiftDays()
+
+        if let expiryDate = SubscriptionHelper.subscriptionRenewalDate(), expiryDate > Date(), giftDays == 0 {
+            return !renewing
+        }
+
+        let timeToSubscriptionExpiry = SubscriptionHelper.timeToSubscriptionExpiry() ?? 0
+        return !renewing && timeToSubscriptionExpiry < 0 && giftDays == 0
+    }
 
     /// Returns the users active subscription tier or .none if they don't currently have one
     open var activeTier: SubscriptionTier {
@@ -75,6 +88,12 @@ open class SubscriptionHelper: NSObject {
         return renewalDate
     }
 
+    public class func subscriptionCreateDate() -> Date? {
+        let createDateTimeInterval = UserDefaults.standard.integer(forKey: ServerConstants.UserDefaults.subscriptionCreateDate)
+        let createDate = Date(timeIntervalSince1970: TimeInterval(createDateTimeInterval))
+        return createDate
+    }
+
     public class func timeToSubscriptionExpiry() -> TimeInterval? {
         if !hasRenewingSubscription() {
             let renewalTimeInterval = UserDefaults.standard.double(forKey: ServerConstants.UserDefaults.subscriptionExpiryDate)
@@ -118,6 +137,10 @@ open class SubscriptionHelper: NSObject {
         UserDefaults.standard.set(value, forKey: ServerConstants.UserDefaults.subscriptionExpiryDate)
     }
 
+    public class func setSubscriptionCreateDate(_ value: TimeInterval) {
+        UserDefaults.standard.set(value, forKey: ServerConstants.UserDefaults.subscriptionCreateDate)
+    }
+
     public class func setSubscriptionGiftDays(_ value: Int) {
         UserDefaults.standard.set(value, forKey: ServerConstants.UserDefaults.subscriptionGiftDays)
     }
@@ -127,12 +150,19 @@ open class SubscriptionHelper: NSObject {
     }
 
     public class func setSubscriptionGiftAcknowledgement(_ value: Bool) {
+        if FeatureFlag.newSettingsStorage.enabled {
+            SettingsStore.appSettings.freeGiftAcknowledgement = value
+        }
         UserDefaults.standard.set(value, forKey: ServerConstants.UserDefaults.subscriptionGiftAcknowledgement)
         UserDefaults.standard.set(true, forKey: ServerConstants.UserDefaults.subscriptionGiftAcknowledgementNeedsSyncKey)
     }
 
     public class func subscriptionGiftAcknowledgement() -> Bool {
-        UserDefaults.standard.bool(forKey: ServerConstants.UserDefaults.subscriptionGiftAcknowledgement)
+        if FeatureFlag.newSettingsStorage.enabled {
+            return SettingsStore.appSettings.freeGiftAcknowledgement
+        } else {
+            return UserDefaults.standard.bool(forKey: ServerConstants.UserDefaults.subscriptionGiftAcknowledgement)
+        }
     }
 
     public class func subscriptionGiftAcknowledgementNeedsSyncing() -> Bool {
@@ -210,5 +240,33 @@ open class SubscriptionHelper: NSObject {
             }
         }
         return nil
+    }
+
+    // MARK: Banner AD
+
+    public class var shouldRemoveBannerAd: Bool {
+        get {
+            UserDefaults.standard.bool(forKey: ServerConstants.UserDefaults.removeBannerAds)
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: ServerConstants.UserDefaults.removeBannerAds)
+        }
+    }
+
+    public class var shouldRemoveDiscoverAds: Bool {
+        get {
+            UserDefaults.standard.bool(forKey: ServerConstants.UserDefaults.removeDiscoverAds)
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: ServerConstants.UserDefaults.removeDiscoverAds)
+        }
+    }
+
+    public class var shouldDisplayBannerAd: Bool {
+        FeatureFlag.bannerAdPodcasts.enabled && !(SubscriptionHelper.shouldRemoveBannerAd || SubscriptionHelper.hasActiveSubscription())
+    }
+
+    public class var shouldDisplayPlayerBannerAd: Bool {
+        FeatureFlag.bannerAdPlayer.enabled && !(SubscriptionHelper.shouldRemoveBannerAd || SubscriptionHelper.hasActiveSubscription())
     }
 }

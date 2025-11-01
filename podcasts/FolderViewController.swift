@@ -1,30 +1,12 @@
 import PocketCastsDataModel
 import PocketCastsUtils
 import UIKit
+import SwiftUI
 
 class FolderViewController: PCViewController, UIGestureRecognizerDelegate {
     @IBOutlet var mainGrid: UICollectionView! {
         didSet {
             registerCells()
-        }
-    }
-
-    @IBOutlet var emptyFolderView: ThemeableView!
-    @IBOutlet var emptyFolderTitle: ThemeableLabel! {
-        didSet {
-            emptyFolderTitle.text = L10n.folderEmptyTitle
-        }
-    }
-
-    @IBOutlet var emptyFolderDescription: UILabel! {
-        didSet {
-            emptyFolderDescription.text = L10n.folderEmptyDescription
-        }
-    }
-
-    @IBOutlet var emptyFolderImage: ThemeableImageView! {
-        didSet {
-            emptyFolderImage.imageStyle = .primaryIcon01
         }
     }
 
@@ -55,6 +37,8 @@ class FolderViewController: PCViewController, UIGestureRecognizerDelegate {
         let longPressGesture = UILongPressGestureRecognizer(target: self, action: #selector(handleLongPress(_:)))
         mainGrid.addGestureRecognizer(longPressGesture)
         longPressGesture.delegate = self
+
+        miniPlayerStatusDidChange()
 
         gridHelper.configureLayout(collectionView: mainGrid)
 
@@ -96,6 +80,11 @@ class FolderViewController: PCViewController, UIGestureRecognizerDelegate {
         let titleColor = ThemeColor.filterText01(filterColor: folderColor)
         let iconColor = ThemeColor.filterIcon01(filterColor: folderColor)
         let backgroundColor = ThemeColor.filterUi01(filterColor: folderColor)
+
+        if let themeableCollectionView = mainGrid as? ThemeableCollectionView {
+            themeableCollectionView.style = Settings.libraryType() == .list ?  ThemeStyle.primaryUi04 : ThemeStyle.primaryUi02
+        }
+
         changeNavTint(titleColor: titleColor, iconsColor: iconColor, backgroundColor: backgroundColor)
     }
 
@@ -121,7 +110,11 @@ class FolderViewController: PCViewController, UIGestureRecognizerDelegate {
     @objc private func folderOptionsTapped(_ sender: UIBarButtonItem) {
         let optionsPicker = OptionsPicker(title: nil)
 
-        let sortOption = folder.librarySort()
+        let sortOption: LibrarySort = if !FeatureFlag.podcastsSortChanges.enabled, folder.librarySort() == .recentlyPlayed {
+            .dateAddedNewestToOldest
+        } else {
+            folder.librarySort()
+        }
         let sortAction = OptionAction(label: L10n.sortBy, secondaryLabel: sortOption.description, icon: "podcast-sort") { [weak self] in
             self?.showSortOptions()
             Analytics.track(.folderOptionsModalOptionTapped, properties: ["option": "sort_by"])
@@ -181,31 +174,51 @@ class FolderViewController: PCViewController, UIGestureRecognizerDelegate {
     private func showSortOptions() {
         let options = OptionsPicker(title: L10n.sortBy.localizedUppercase)
 
+        if !FeatureFlag.podcastsSortChanges.enabled, folder.librarySort() == .recentlyPlayed {
+            folder.sortType = Int32(LibrarySort.Old.dateAddedNewestToOldest.rawValue)
+            folder.syncModified = TimeFormatter.currentUTCTimeInMillis()
+            DataManager.sharedManager.save(folder: folder)
+        }
+
         let sortOption = folder.librarySort()
+
         let podcastNameAction = OptionAction(label: LibrarySort.titleAtoZ.description, selected: sortOption == .titleAtoZ) { [weak self] in
             self?.changeSortOrder(.titleAtoZ)
         }
-        options.addAction(action: podcastNameAction)
 
         let releaseDateAction = OptionAction(label: LibrarySort.episodeDateNewestToOldest.description, selected: sortOption == .episodeDateNewestToOldest) { [weak self] in
             self?.changeSortOrder(.episodeDateNewestToOldest)
         }
-        options.addAction(action: releaseDateAction)
 
         let subscribedOrder = OptionAction(label: LibrarySort.dateAddedNewestToOldest.description, selected: sortOption == .dateAddedNewestToOldest) { [weak self] in
             self?.changeSortOrder(.dateAddedNewestToOldest)
         }
-        options.addAction(action: subscribedOrder)
 
         let dragAndDropAction = OptionAction(label: LibrarySort.custom.description, selected: sortOption == .custom) { [weak self] in
             self?.changeSortOrder(.custom)
         }
-        options.addAction(action: dragAndDropAction)
+
+        let recentlyPlayedOrder = OptionAction(label: LibrarySort.recentlyPlayed.description, selected: sortOption == .recentlyPlayed) { [weak self] in
+            self?.changeSortOrder(.recentlyPlayed)
+        }
+
+        if FeatureFlag.podcastsSortChanges.enabled {
+            options.addAction(action: subscribedOrder)
+            options.addAction(action: releaseDateAction)
+            options.addAction(action: recentlyPlayedOrder)
+            options.addAction(action: podcastNameAction)
+            options.addAction(action: dragAndDropAction)
+        } else {
+            options.addAction(action: podcastNameAction)
+            options.addAction(action: releaseDateAction)
+            options.addAction(action: subscribedOrder)
+            options.addAction(action: dragAndDropAction)
+        }
 
         options.show(statusBarStyle: preferredStatusBarStyle)
     }
 
-    private func changeSortOrder(_ order: LibrarySort) {
+    private func changeSortOrder(_ order: LibrarySort.Old) {
         folder.sortType = Int32(order.rawValue)
         folder.syncModified = TimeFormatter.currentUTCTimeInMillis()
         DataManager.sharedManager.save(folder: folder)
@@ -216,11 +229,9 @@ class FolderViewController: PCViewController, UIGestureRecognizerDelegate {
     }
 
     @objc private func miniPlayerStatusDidChange() {
-        if PlaybackManager.shared.currentEpisode() != nil {
-            mainGrid.contentInset = UIEdgeInsets(top: mainGrid.contentInset.top, left: 0, bottom: Constants.Values.miniPlayerOffset, right: 0)
-        } else {
-            mainGrid.contentInset = UIEdgeInsets(top: mainGrid.contentInset.top, left: 0, bottom: 0, right: 0)
-        }
+        let horizontalMargin: CGFloat = Settings.libraryType() == .list ? 0 : 16
+        let bottomMargin: CGFloat = PlaybackManager.shared.currentEpisode() == nil ? 0 : Constants.Values.miniPlayerOffset + 8
+        mainGrid.contentInset = UIEdgeInsets(top: mainGrid.contentInset.top, left: horizontalMargin, bottom: bottomMargin, right: horizontalMargin)
     }
 
     // TODO: change this to be diff based and see if we can use the new iOS diffable stuff
@@ -245,6 +256,28 @@ class FolderViewController: PCViewController, UIGestureRecognizerDelegate {
         }
 
         mainGrid.reloadData()
-        emptyFolderView.isHidden = podcasts.count > 0
+
+        let shouldShowEmpty = podcasts.isEmpty
+        refreshContentUnavailable(shouldShow: shouldShowEmpty)
+    }
+
+    private func refreshContentUnavailable(shouldShow: Bool) {
+        var config: UIContentConfiguration?
+
+        if shouldShow {
+            let title = L10n.folderEmptyTitle
+            let message = L10n.folderEmptyDescription
+            config = ContentUnavailableConfiguration.emptyState(title: title, message: message, icon: { Image("folder-empty") }, actions: [
+                .init(title: L10n.folderEmptyButtonTitle, action: {
+                    self.addPodcastsTapped(self)
+                })
+            ])
+        }
+
+        if #available(iOS 17.0, *) {
+            self.contentUnavailableConfiguration = config
+        } else {
+            self.setContentUnavailableConfiguration(config)
+        }
     }
 }

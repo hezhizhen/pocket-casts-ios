@@ -2,11 +2,13 @@ import Foundation
 import PocketCastsServer
 import SwiftUI
 import PocketCastsDataModel
+import PocketCastsUtils
 
 class LoginCoordinator: NSObject, OnboardingModel {
     weak var navigationController: UINavigationController? = nil
     let headerImages: [LoginHeaderImage]
-    var continuePurchasing: Constants.ProductInfo? = nil
+    var continuePurchasing: ProductInfo? = nil
+    var isOnboarding: Bool = false
 
     private var socialLogin: SocialLogin?
     private var socialAuthProvider: SocialAuthProvider?
@@ -54,9 +56,14 @@ class LoginCoordinator: NSObject, OnboardingModel {
     func loginTapped() {
         socialAuthProvider = nil
         OnboardingFlow.shared.track(.setupAccountButtonTapped, properties: ["button": "sign_in"])
-        let controller = SyncSigninViewController()
-        controller.delegate = self
-        navigationController?.pushViewController(controller, animated: true)
+        if FeatureFlag.newOnboardingAccountCreation.enabled {
+            let vc = UIHostingController(rootView: SyncSigninView(coordinator: self, loginAgain: false, onCompleted: { self.navigationController?.presentingViewController?.dismiss(animated: true) }).environmentObject(Theme.sharedTheme))
+            navigationController?.pushViewController(vc, animated: true)
+        } else {
+            let controller = SyncSigninViewController()
+            controller.delegate = self
+            navigationController?.pushViewController(controller, animated: true)
+        }
     }
 
     func signUpTapped() {
@@ -65,6 +72,46 @@ class LoginCoordinator: NSObject, OnboardingModel {
         let controller = NewEmailViewController()
         controller.delegate = self
         navigationController?.pushViewController(controller, animated: true)
+    }
+
+    func getStartedTapped() {
+        OnboardingFlow.shared.track(.setupAccountButtonTapped, properties: ["button": "get_started"])
+        let hostingController: UIViewController
+        if FeatureFlag.newOnboardingRecommendationChanges.enabled {
+            let view = InterestsView(continueCallback: { categories in
+                self.interestsContinueTapped(categories: categories)
+            }) {
+                self.interestsContinueTapped(categories: nil)
+            }
+            hostingController = UIHostingController(rootView: view.setupDefaultEnvironment())
+        } else {
+            hostingController = UIHostingController(rootView: OnboardingRecommendationsView(coordinator: self).setupDefaultEnvironment())
+        }
+
+        hostingController.navigationItem.backBarButtonItem = UIBarButtonItem(title: "", style: .plain, target: nil, action: nil)
+        navigationController?.pushViewController(hostingController, animated: true)
+    }
+
+    func interestsContinueTapped(categories: [DiscoverCategory]?) {
+        let configuration: RecommendationsViewModel.Configuration
+        if let categories {
+            configuration = .preselected(categories)
+        } else {
+            configuration = .all
+        }
+        let view = OnboardingRecommendationsView(coordinator: self, viewModel: RecommendationsViewModel(configuration: configuration))
+        let hostingController = UIHostingController(rootView: view.setupDefaultEnvironment())
+        hostingController.navigationItem.backBarButtonItem = UIBarButtonItem(title: "", style: .plain, target: nil, action: nil)
+        navigationController?.pushViewController(hostingController, animated: true)
+    }
+
+    func recommendationsContinueTapped() {
+        socialAuthProvider = nil
+        OnboardingFlow.shared.track(.setupAccountButtonTapped, properties: ["button": "recommendations_continue"])
+        let view = LoginLandingView(coordinator: self, fullScreenMode: true)
+        let hostingController = LoginLandingHostingController(rootView: view.setupDefaultEnvironment())
+        hostingController.viewModel = self
+        navigationController?.pushViewController(hostingController, animated: true)
     }
 
     @objc func dismissTapped() {
@@ -123,6 +170,10 @@ extension LoginCoordinator {
                     Analytics.track(.userSignedIn, properties: ["source": provider])
                 }
 
+                if FeatureFlag.endOfYear2024.enabled || FeatureFlag.endOfYear2025.enabled {
+                    NotificationCenter.postOnMainThread(notification: .userSignedIn)
+                }
+
                 listenToSync()
             } catch {
                 progressAlert?.hideAlert(false) {
@@ -172,7 +223,7 @@ extension LoginCoordinator: SyncSigninDelegate, CreateAccountDelegate {
 
     func handleAccountCreated() {
         Analytics.track(.userAccountCreated, properties: ["source": socialAuthProvider ?? "password"])
-
+        OnboardingFlow.shared.accountCreated?(true)
         if OnboardingFlow.shared.currentFlow.shouldDismiss {
             handleDismiss()
             return
@@ -204,27 +255,50 @@ extension LoginCoordinator: SyncSigninDelegate, CreateAccountDelegate {
 
     private func goToPlus(from source: PlusLandingViewModel.Source) {
         // Update the flow to make sure the correct analytics source is passed on
-        OnboardingFlow.shared.updateAnalyticsSource(source == .login ? "login" : "account_created")
-
-        let controller = PlusLandingViewModel.make(in: navigationController,
-                                                   from: source,
-                                                   config: .init(continuePurchasing: continuePurchasing))
-        navigationController?.setViewControllers([controller], animated: true)
+        OnboardingFlow.shared.updateAnalyticsSource(source == .login ? .login: .accountCreated)
+        if FeatureFlag.newOnboardingUpgrade.enabled {
+            let controller = UpgradeAccountViewModel.make(in: navigationController,
+                                                          flowSource: source,
+                                                          viewSource: .onboarding,
+                                                          plan: .plus,
+                                                          frequency: .yearly,
+                                                          )
+            controller.modalPresentationStyle = .fullScreen
+            navigationController?.setViewControllers([controller], animated: true)
+        } else {
+            let controller = PlusLandingViewModel.make(in: navigationController,
+                                                       from: source,
+                                                       viewSource: .onboarding,
+                                                       config: .init(continuePurchasing: continuePurchasing))
+            navigationController?.setViewControllers([controller], animated: true)
+        }
     }
 }
 
 // MARK: - Helpers
 
 extension LoginCoordinator {
-    static func make(in navigationController: UINavigationController? = nil, continuePurchasing: Constants.ProductInfo? = nil) -> UIViewController {
+    static func make(in navigationController: UINavigationController? = nil, continuePurchasing: ProductInfo? = nil, isOnboarding: Bool = false) -> UIViewController {
         let coordinator = LoginCoordinator()
         coordinator.continuePurchasing = continuePurchasing
+        coordinator.isOnboarding = isOnboarding
 
-        let view = LoginLandingView(coordinator: coordinator)
-        let controller = LoginLandingHostingController(rootView: view.setupDefaultEnvironment())
-        controller.viewModel = coordinator
+        let controller: UIViewController
+
+        if FeatureFlag.newOnboardingAccountCreation.enabled && isOnboarding {
+            let view = IntroCarouselView(coordinator: coordinator)
+                .setupDefaultEnvironment()
+            let hostingController = IntroCarouselHostingController(rootView: view)
+            controller = hostingController
+        } else {
+            let view = LoginLandingView(coordinator: coordinator, fullScreenMode: true)
+            let hostingController = LoginLandingHostingController(rootView: view.setupDefaultEnvironment())
+            hostingController.viewModel = coordinator
+            controller = hostingController
+        }
 
         let navController = navigationController ?? UINavigationController(rootViewController: controller)
+        navController.modalPresentationStyle = UIDevice.current.isiPad() ? .formSheet : .fullScreen
         coordinator.navigationController = navController
 
         return (navigationController == nil) ? navController : controller

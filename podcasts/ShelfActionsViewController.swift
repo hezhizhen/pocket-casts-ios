@@ -1,11 +1,10 @@
-import MaterialComponents.MaterialBottomSheet
 import UIKit
 
-class ShelfActionsViewController: UIViewController {
+class ShelfActionsViewController: UIViewController, CheckTranscriptAvailability {
     @IBOutlet var actionsTable: UITableView! {
         didSet {
             registerCells()
-            actionsTable.isScrollEnabled = false
+            actionsTable.isScrollEnabled = true
             actionsTable.backgroundView = nil
 
             actionsTable.separatorColor = AppTheme.tableDividerColor(for: .dark)
@@ -46,8 +45,18 @@ class ShelfActionsViewController: UIViewController {
 
     var allActions = Settings.playerActions()
     var extraActions = Settings.playerActions()
+    var maxShelfActionsAdjustment: Int = 0
 
     weak var playerActionsDelegate: NowPlayingActionsDelegate?
+
+    private var sheetPresentationDismissalBlocker: ShelfActionsSheetDismissalBlocker?
+
+    var hasGeneratedTranscripts = false
+    var isTranscriptEnabled = false {
+        didSet {
+            reloadActions()
+        }
+    }
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -59,6 +68,9 @@ class ShelfActionsViewController: UIViewController {
 
         NotificationCenter.default.addObserver(self, selector: #selector(appDidBecomeActive), name: UIApplication.didBecomeActiveNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(updateColors), name: Constants.Notifications.themeChanged, object: nil)
+
+        addTranscriptObservers()
+        checkTranscriptAvailability()
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -99,8 +111,16 @@ class ShelfActionsViewController: UIViewController {
         editButtonVerticalConstraint.isActive = false
         doneButtonVerticalConstraint.isActive = true
         setPreferredSize(animated: true)
-        if let sheetController = parent as? MDCBottomSheetController {
-            sheetController.dismissOnDraggingDownSheet = false
+
+        if let sheetController = sheetPresentationController {
+            // If we're being presented in a bottom sheet enlarge it to (almost) fill the
+            // screen and drop any other detents so the sheet cannot be made smaller by
+            // the user.
+            sheetController.animateChanges { sheetController.detents = [.large()] }
+
+            // Prevent the user from swiping to dismiss the bottom sheet.
+            sheetPresentationDismissalBlocker = .init()
+            sheetController.delegate = sheetPresentationDismissalBlocker
         }
 
         Analytics.track(.playerShelfOverflowMenuRearrangeStarted)
@@ -139,6 +159,14 @@ class ShelfActionsViewController: UIViewController {
         actionsTable.reloadData()
     }
 
+    @objc private func episodeTranscriptAvailabilityChanged(notification: NSNotification) {
+        guard let episodeUuid = notification.userInfo?["episodeUuid"] as? String,
+              let isAvailable = notification.userInfo?["isAvailable"] as? Bool,
+              episodeUuid == PlaybackManager.shared.currentEpisode()?.uuid else {
+            return
+        }
+    }
+
     func updateAvailableActions() {
         guard let episode = PlaybackManager.shared.currentEpisode() else { return }
 
@@ -157,7 +185,7 @@ class ShelfActionsViewController: UIViewController {
 private extension ShelfActionsViewController {
     /// Highlights the bookmarks row when triggered from the what's new
     func highlightAddBookmarksIfNeeded() {
-        guard FeatureFlag.bookmarks.enabled, AnnouncementFlow.current == .bookmarksPlayer else {
+        guard AnnouncementFlow.current == .bookmarksPlayer else {
             return
         }
 
@@ -169,5 +197,14 @@ private extension ShelfActionsViewController {
         }
 
         actionsTable.selectRow(at: .init(row: index, section: 0), animated: true, scrollPosition: .middle)
+    }
+}
+
+/// A UISheetPresentationControllerDelegate that prevents the user from swiping the
+/// sheet away by always rejecting dismissal requests. Programmatic dismissals are still
+/// respected.
+private final class ShelfActionsSheetDismissalBlocker: NSObject, UISheetPresentationControllerDelegate {
+    func presentationControllerShouldDismiss(_ presentationController: UIPresentationController) -> Bool {
+        false
     }
 }

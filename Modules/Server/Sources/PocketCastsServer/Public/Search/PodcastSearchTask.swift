@@ -2,6 +2,8 @@ import Foundation
 import PocketCastsDataModel
 
 struct PodcastsSearchEnvelope: Decodable {
+    let status: String
+    let message: String?
     let result: PodcastsSearchEnvelopeResult
 }
 
@@ -10,7 +12,10 @@ struct PodcastsSearchEnvelopeResult: Decodable {
     let podcast: PodcastFolderSearchResult?
 
     /// Regular search results based on a search term
-    let searchResults: [PodcastFolderSearchResult]
+    let searchResults: [PodcastFolderSearchResult]?
+
+    /// The poll uuid if the result is still being processed on the server
+    let pollUuid: String?
 }
 
 public struct PodcastFolderSearchResult: Codable, Hashable {
@@ -45,6 +50,31 @@ public struct PodcastFolderSearchResult: Codable, Hashable {
         self.kind = .folder
     }
 
+    public init?(from predictiveResult: PredictiveSearchResult) {
+        switch predictiveResult.type {
+            case .podcast(let podcast):
+                self.uuid = podcast.uuid
+                self.author = podcast.author
+                self.title = podcast.title
+                self.kind = .podcast
+                self.isLocal = false
+            default:
+                return nil
+        }
+
+    }
+
+    public init?(from combinedResult: CombinedSearchResult) {
+        guard combinedResult.type == "podcast" else {
+            return nil
+        }
+        self.uuid = combinedResult.uuid
+        self.author = combinedResult.author
+        self.title = combinedResult.title
+        self.kind = .podcast
+        self.isLocal = false
+    }
+
     public enum Kind: Codable {
         case podcast, folder
     }
@@ -66,7 +96,32 @@ public class PodcastSearchTask {
     public init(session: URLSession = .shared) {
         self.session = session
     }
+
     public func search(term: String) async throws -> [PodcastFolderSearchResult] {
+        var envelope: PodcastsSearchEnvelope?
+        var retry = true
+        var pollCount = 0
+        while retry {
+            envelope = try await search(term: term)
+            // Check if status of search is poll, if it's polled we will repeat the call after x amount of secs.
+            pollCount += 1
+            let backOffTime = pollBackoffTime(pollCount: pollCount)
+            guard envelope?.status == "poll", backOffTime > 0 else {
+                retry = false
+                continue
+            }
+
+            try await Task.sleep(nanoseconds: backOffTime)
+        }
+
+        if let podcast = envelope?.result.podcast {
+            return [podcast]
+        } else {
+            return envelope?.result.searchResults ?? []
+        }
+    }
+
+    private func search(term: String) async throws -> PodcastsSearchEnvelope {
         let url = ServerHelper.asUrl(ServerConstants.Urls.main() + "podcasts/search")
         let request = ServerHelper.createJsonRequest(url: url, params: MainServerHandler.shared.podcastSearchQuery(searchTerm: term)!, timeout: 10, cachePolicy: .reloadIgnoringCacheData)
 
@@ -74,10 +129,32 @@ public class PodcastSearchTask {
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         let envelope = try decoder.decode(PodcastsSearchEnvelope.self, from: data)
-        if let podcast = envelope.result.podcast {
-            return [podcast]
-        } else {
-            return envelope.result.searchResults
+        return envelope
+    }
+
+    private func pollBackoffTime(pollCount: Int) -> UInt64 {
+        let multiply = pow(10, 9)
+
+        return UInt64(NSDecimalNumber(decimal: Decimal(pollCount.pollWaitingTime) * multiply).uint64Value)
+    }
+}
+
+extension Int {
+    // Return a correspondent poll waiting time for a given number
+    // From 1 to 2: 2 seconds
+    // From 3 to 6: 5 second
+    // For 7: 10 seconds
+    // Others: -1
+    var pollWaitingTime: TimeInterval {
+        switch self {
+        case 1..<3:
+            2
+        case 3..<7:
+            5
+        case 7:
+            10
+        default:
+            -1
         }
     }
 }

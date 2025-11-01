@@ -1,30 +1,39 @@
 import Foundation
+import Network
 
 public class NetworkUtils {
-    #if !os(watchOS)
-        private lazy var reachability: Reachability = {
-            let reachability = Reachability()!
 
-            return reachability
-        }()
-    #endif
+    private lazy var monitor = NWPathMonitor()
 
-    private init() {}
+    private init() {
+        monitor.pathUpdateHandler = { path in
+            switch path.status {
+            case .satisfied:
+                FileLog.shared.addMessage("NetworkMonitor: Network is connected isExpensive: \(path.isExpensive)")
+            case .unsatisfied:
+                FileLog.shared.addMessage("NetworkMonitor: Network is disconnected")
+            case .requiresConnection:
+                FileLog.shared.addMessage("NetworkMonitor: Network requires connection")
+            @unknown default:
+                FileLog.shared.addMessage("NetworkMonitor: Unknown path status")
+            }
+        }
+        monitor.start(queue: .main)
+    }
+
+    deinit {
+        monitor.cancel()
+    }
+
     public static let shared = NetworkUtils()
 
     // MARK: - Connectivity
 
-    public func isConnectedToWifi() -> Bool {
-        #if os(watchOS)
-            return true // TODO:
-        #else
-            return reachability.connection == .wifi
-        #endif
+    public func isConnectedToUnexpensiveConnection() -> Bool {
+        return !monitor.currentPath.isExpensive
     }
 
-    #if !os(watchOS)
     public func isConnected() -> Bool {
-        reachability.connection != .none
+        monitor.currentPath.status == .satisfied
     }
-    #endif
 }

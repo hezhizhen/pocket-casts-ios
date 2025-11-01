@@ -4,6 +4,8 @@ import PocketCastsUtils
 import SwiftProtobuf
 
 class SubscriptionStatusTask: ApiBaseTask {
+    var completion: ((Bool) -> Void)?
+
     override func apiTokenAcquired(token: String) {
         let url = ServerConstants.Urls.api() + "subscription/status"
         do {
@@ -11,6 +13,7 @@ class SubscriptionStatusTask: ApiBaseTask {
 
             guard let responseData = response, httpStatus?.statusCode == ServerConstants.HttpConstants.ok else {
                 FileLog.shared.addMessage("Subscription status failed \(httpStatus?.statusCode ?? -1)")
+                completion?(false)
                 return
             }
             do {
@@ -25,19 +28,29 @@ class SubscriptionStatusTask: ApiBaseTask {
                 SubscriptionHelper.setSubscriptionType(Int(status.type))
                 SubscriptionHelper.subscriptionTier = SubscriptionTier(rawValue: status.tier) ?? .none
 
+                SubscriptionHelper.shouldRemoveBannerAd = status.features.removeBannerAds
+                SubscriptionHelper.shouldRemoveDiscoverAds = status.features.removeDiscoverAds
+                SubscriptionHelper.setSubscriptionCreateDate(status.createdAt.timeIntervalSince1970)
+
                 NotificationCenter.default.post(name: ServerNotifications.subscriptionStatusChanged, object: nil)
 
                 var expiryDateString = "nil"
                 if let expiryDate = SubscriptionHelper.subscriptionRenewalDate() {
                     expiryDateString = expiryDate.description
                 }
-                FileLog.shared.addMessage("Received subscription status paid : \(status.paid), platform : \(status.platform), frequency : \(status.frequency), giftDays : \(status.giftDays), expiryDate : \(expiryDateString)")
+                var createDateString = "nil"
+                if let createDate = SubscriptionHelper.subscriptionCreateDate() {
+                    createDateString = createDate.description
+                }
+                FileLog.shared.addMessage("Received subscription status paid : \(status.paid), platform : \(status.platform), frequency : \(status.frequency), giftDays : \(status.giftDays), createDate: \(createDateString), expiryDate : \(expiryDateString), autoRenewing : \(status.autoRenewing), timeToSubscriptionExpiry: \(SubscriptionHelper.timeToSubscriptionExpiry() ?? 0), originalSubscriptionStatus: \(originalSubscriptionStatus), shouldRemoveBannerAd: \(status.features.removeBannerAds), shouldRemoveDiscoverAds: \(status.features.removeDiscoverAds)")
                 if originalSubscriptionStatus, !SubscriptionHelper.hasActiveSubscription() {
                     ServerConfig.shared.syncDelegate?.cleanupCloudOnlyFiles()
                 }
+                completion?(true)
             }
         } catch {
             FileLog.shared.addMessage("SubscriptionStatusTask: Protobuf Encoding failed \(error.localizedDescription)")
+            completion?(false)
         }
     }
 

@@ -3,8 +3,8 @@ import Foundation
 extension PCSearchBarController {
     func setupScrollView(_ scrollView: UIScrollView, hideSearchInitially: Bool) {
         if !hideSearchInitially {
-            scrollView.contentInset = UIEdgeInsets(top: PCSearchBarController.defaultHeight, left: 0, bottom: scrollView.contentInset.bottom, right: 0)
-            scrollView.setContentOffset(CGPoint(x: 0, y: -PCSearchBarController.defaultHeight), animated: false)
+            scrollView.contentInset = UIEdgeInsets(top: PCSearchBarController.defaultHeight, left: scrollView.contentInset.left, bottom: scrollView.contentInset.bottom, right: scrollView.contentInset.right)
+            scrollView.setContentOffset(CGPoint(x: scrollView.contentOffset.x, y: -PCSearchBarController.defaultHeight), animated: false)
         }
     }
 
@@ -36,13 +36,13 @@ extension PCSearchBarController {
         let shouldAnimateUp = (!decelerate && !scrollingDown && yPos > -PCSearchBarController.defaultHeight && yPos < 0)
 
         if shouldChangeInset, scrollView.contentInset.top != PCSearchBarController.defaultHeight {
-            scrollView.contentInset = UIEdgeInsets(top: PCSearchBarController.defaultHeight, left: 0, bottom: scrollView.contentInset.bottom, right: 0)
+            scrollView.contentInset = UIEdgeInsets(top: PCSearchBarController.defaultHeight, left: scrollView.contentInset.left, bottom: scrollView.contentInset.bottom, right: scrollView.contentInset.right)
         }
 
         if shouldAnimateDown {
-            scrollView.setContentOffset(CGPoint(x: 0, y: -PCSearchBarController.defaultHeight - topOffset), animated: true)
+            scrollView.setContentOffset(CGPoint(x: scrollView.contentOffset.x, y: -PCSearchBarController.defaultHeight - topOffset), animated: true)
         } else if shouldAnimateUp {
-            scrollView.setContentOffset(CGPoint(x: 0, y: -topOffset), animated: true)
+            scrollView.setContentOffset(CGPoint(x: scrollView.contentOffset.x, y: -topOffset), animated: true)
         }
     }
 }

@@ -6,6 +6,7 @@ import UIKit
 class SingleEpisodeViewController: UIViewController {
     private let viewModel = DiscoverEpisodeViewModel()
     private var cancellables = Set<AnyCancellable>()
+    private var category: DiscoverCategory?
 
     @IBOutlet var episodeTitle: ThemeableLabel!
     @IBOutlet var podcastTitle: ThemeableLabel! {
@@ -38,7 +39,8 @@ class SingleEpisodeViewController: UIViewController {
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        viewModel.registerListImpression()
+        let categoryId = category?.id.map(String.init)
+        viewModel.registerListImpression(category: categoryId)
     }
 
     func observeEpisodeChanges() {
@@ -110,8 +112,9 @@ extension SingleEpisodeViewController: DiscoverSummaryProtocol {
         viewModel.delegate = delegate
     }
 
-    func populateFrom(item: DiscoverItem) {
+    func populateFrom(item: DiscoverItem, region: String?, category: DiscoverCategory?) {
         viewModel.discoverItem = item
+        self.category = category
 
         typeBadgeLabel.text = (item.title ?? L10n.discoverFeaturedEpisode).uppercased()
     }

@@ -14,6 +14,10 @@ class AnalyticsEpisodeHelper: AnalyticsCoordinator {
         addNotificationObservers()
     }
 
+    func setup() {
+        // Empty method just to ensure that sigleton is initialized
+    }
+
     // MARK: - Star
 
     func star(episode: BaseEpisode) {
@@ -32,6 +36,7 @@ class AnalyticsEpisodeHelper: AnalyticsCoordinator {
         bulkEvent(.episodeBulkUnstarred, count: count)
     }
 
+
     // MARK: - Download
 
     func downloadCancelled(episodeUUID: String) {
@@ -45,6 +50,14 @@ class AnalyticsEpisodeHelper: AnalyticsCoordinator {
 
     func downloadFinished(episodeUUID: String) {
         episodeEvent(.episodeDownloadFinished, uuid: episodeUUID)
+    }
+
+    func downloadFailed(episodeUUID: String,
+                        podcastUUID: String,
+                        extraProperties: [String: Any]) {
+        track(.episodeDownloadFailed, properties: ["episode_uuid": episodeUUID,
+                                                   "podcast_uuid": podcastUUID,
+                                                  ].merging(extraProperties, uniquingKeysWith: { (current, _) in return current }))
     }
 
     func bulkDownloadEpisodes(episodes: [BaseEpisode]) {
@@ -77,6 +90,10 @@ class AnalyticsEpisodeHelper: AnalyticsCoordinator {
 
     func bulkMarkAsUnplayed(count: Int) {
         bulkEvent(.episodeBulkMarkedAsUnplayed, count: count)
+    }
+
+    func bulkRemoveFromListeningHistory(count: Int) {
+        bulkEvent(.episodeRemovedListeningHistory, count: count)
     }
 
     // MARK: - Archive
@@ -116,10 +133,14 @@ class AnalyticsEpisodeHelper: AnalyticsCoordinator {
         episodeEvent(.episodeUploadFinished, uuid: episodeUUID)
     }
 
+    func episodeUploadFailed(episodeUUID: String) {
+        episodeEvent(.episodeUploadFailed, uuid: episodeUUID)
+    }
+
     // MARK: - Up Next
 
     func episodeAddedToUpNext(episode: BaseEpisode, toTop: Bool) {
-        track(.episodeAddedToUpNext, properties: ["episode_uuid": episode.uuid, "to_top": toTop])
+        track(.episodeAddedToUpNext, properties: ["episode_uuid": episode.uuid, "podcast_uuid": episode.parentIdentifier(), "to_top": toTop])
     }
 
     func bulkAddToUpNext(count: Int, toTop: Bool) {
@@ -181,14 +202,20 @@ private extension AnalyticsEpisodeHelper {
                 // Verify that the file has finished uploading
                 guard
                     let episode = DataManager.sharedManager.findUserEpisode(uuid: uuid),
-                    let status = UploadStatus(rawValue: episode.uploadStatus),
-                    status == .uploaded
+                    let status = UploadStatus(rawValue: episode.uploadStatus)
                 else {
                     return
                 }
 
-                self.episodeUploadQueue.remove(uuid)
-                self.episodeUploadFinished(episodeUUID: uuid)
+                switch status {
+                case .uploaded:
+                    self.episodeUploadQueue.remove(uuid)
+                    self.episodeUploadFinished(episodeUUID: uuid)
+                case .uploadFailed:
+                    self.episodeUploadFailed(episodeUUID: uuid)
+                default:
+                    break
+                }
             }
         #endif
     }

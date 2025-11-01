@@ -6,8 +6,6 @@ import UIKit
 class SiriSettingsViewController: PCViewController, UITableViewDelegate, UITableViewDataSource, INUIAddVoiceShortcutViewControllerDelegate, INUIEditVoiceShortcutViewControllerDelegate {
     @IBOutlet var tableView: UITableView! {
         didSet {
-            tableView.applyInsetForMiniPlayer()
-
             tableView.register(UINib(nibName: "SiriShortcutEnabledCell", bundle: nil), forCellReuseIdentifier: enabledCellId)
             tableView.register(UINib(nibName: "SiriShortcutSuggestedCell", bundle: nil), forCellReuseIdentifier: suggestedCellId)
             tableView.register(UINib(nibName: "SiriShortcutDisclosureCell", bundle: nil), forCellReuseIdentifier: disclosureCelld)
@@ -21,8 +19,8 @@ class SiriSettingsViewController: PCViewController, UITableViewDelegate, UITable
 
     private enum sections { case enabledSection, suggestedSection, playSection }
     private var tableData: [sections] = []
-    private enum playRow { case playPodcast, playFilter }
-    private var playRows: [playRow] = [.playPodcast, .playFilter]
+    private enum playRow { case playPodcast, playPlaylist }
+    private var playRows: [playRow] = [.playPodcast, .playPlaylist]
 
     let enabledCellId = "siriEnabledCellId"
     let suggestedCellId = "siriSuggestedCellId"
@@ -34,7 +32,7 @@ class SiriSettingsViewController: PCViewController, UITableViewDelegate, UITable
         activityIndicator.startAnimating()
         suggestedShortcuts = SiriShortcutsManager.shared.defaultSuggestions()
         enabledShortcuts = [INVoiceShortcut]()
-
+        insetAdjuster.setupInsetAdjustmentsForMiniPlayer(scrollView: tableView)
         Analytics.track(.settingsSiriShown)
     }
 
@@ -107,8 +105,8 @@ class SiriSettingsViewController: PCViewController, UITableViewDelegate, UITable
             switch row {
             case .playPodcast:
                 cell.titleLabel?.text = L10n.settingsSiriShortcutsSpecificPodcast
-            case .playFilter:
-                cell.titleLabel?.text = L10n.settingsSiriShortcutsSpecificFilter
+            case .playPlaylist:
+                cell.titleLabel?.text = FeatureFlag.playlistsRebranding.enabled ? L10n.settingsSiriShortcutsSpecificPlaylist : L10n.settingsSiriShortcutsSpecificFilter
             }
             return cell
         }
@@ -134,8 +132,8 @@ class SiriSettingsViewController: PCViewController, UITableViewDelegate, UITable
         case .playSection:
             let row = playRows[indexPath.row]
             switch row {
-            case .playFilter:
-                showFiltersShortcutsViewController()
+            case .playPlaylist:
+                showPlaylistsShortcutsViewController()
             case .playPodcast:
                 showPodcastShortcutsViewController()
             }
@@ -162,10 +160,10 @@ class SiriSettingsViewController: PCViewController, UITableViewDelegate, UITable
         navigationController?.pushViewController(viewController, animated: true)
     }
 
-    private func showFiltersShortcutsViewController() {
-        let viewController = FiltersShortcutsViewController()
-        let filters = DataManager.sharedManager.allFilters(includeDeleted: false)
-        viewController.filters = filters
+    private func showPlaylistsShortcutsViewController() {
+        let viewController = PlaylistsShortcutsViewController()
+        let playlists = DataManager.sharedManager.allPlaylists(includeDeleted: false)
+        viewController.playlists = playlists
         viewController.delegate = self
         navigationController?.pushViewController(viewController, animated: true)
     }

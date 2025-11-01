@@ -3,16 +3,12 @@ import WidgetKit
 
 struct NowPlayingLockScreenWidget: Widget {
     var body: some WidgetConfiguration {
-        if #available(iOSApplicationExtension 16.0, *) {
-            return StaticConfiguration(kind: "Now_Playing_Lock_Screen_Widget", provider: NowPlayingProvider()) { entry in
-                NowPlayingLockscreenWidgetEntryView(entry: entry)
-            }
-            .configurationDisplayName(L10n.nowPlaying)
-            .description(L10n.widgetsNowPlayingDesc)
-            .supportedFamilies([.accessoryRectangular])
-        } else {
-            return EmptyWidgetConfiguration()
+        return StaticConfiguration(kind: "Now_Playing_Lock_Screen_Widget", provider: NowPlayingProvider()) { entry in
+            NowPlayingLockscreenWidgetEntryView(entry: entry)
         }
+        .configurationDisplayName(L10n.nowPlaying)
+        .description(L10n.widgetsNowPlayingDesc)
+        .supportedFamilies([.accessoryRectangular])
     }
 }
 
@@ -32,7 +28,7 @@ struct NowPlayingLockscreenWidgetEntryView: View {
     }
 
     var widgetURL: String {
-        return entry.episode != nil ? "pktc://show_player" : "pktc://discover"
+        return entry.episode != nil ? "pktc://show_player" : "pktc://discover?source=widget"
     }
 
     var body: some View {
@@ -65,6 +61,8 @@ struct NowPlayingLockscreenWidgetEntryView: View {
                         .foregroundColor(Color.secondary)
                 }
             }
-        }.widgetURL(URL(string: widgetURL))
+        }
+        .widgetURL(URL(string: widgetURL))
+        .clearBackground()
     }
 }

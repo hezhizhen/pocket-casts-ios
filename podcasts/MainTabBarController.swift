@@ -3,17 +3,20 @@ import PocketCastsServer
 import SafariServices
 import UIKit
 import Combine
+import PocketCastsUtils
+import SwiftUI
 
 class MainTabBarController: UITabBarController, NavigationProtocol {
-    enum Tab { case podcasts, filter, discover, profile }
 
-    let tabs: [Tab] = [.podcasts, .filter, .discover, .profile]
+    enum Tab: Int { case podcasts, filter, discover, profile, upNext }
+
+    var pcTabs = [Tab]()
 
     let playPauseCommand = UIKeyCommand(title: L10n.keycommandPlayPause, action: #selector(handlePlayPauseKey), input: " ", modifierFlags: [])
 
-    private lazy var endOfYear = EndOfYear()
+    lazy var endOfYear = EndOfYear()
 
-    private lazy var profileTabBarItem = UITabBarItem(title: L10n.profile, image: UIImage(named: "profile_tab"), tag: tabs.firstIndex(of: .profile)!)
+    private lazy var profileTabBarItem = UITabBarItem(title: L10n.profile, image: UIImage(named: "profile_tab"), tag: pcTabs.firstIndex(of: .profile) ?? -1)
 
 
     /// The viewDidAppear can trigger more than once per lifecycle, setting this flag on the first did appear prevents use from prompting more than once per lifecycle. But still wait until the tab bar has appeared to do so.
@@ -22,28 +25,66 @@ class MainTabBarController: UITabBarController, NavigationProtocol {
     /// Whether we're actively presenting the what's new
     var isShowingWhatsNew: Bool = false
 
+    /// Displayed during database migrations
+    var alert: ShiftyLoadingAlert?
+
+    func loginAgain() {
+        // Ensure the new sync is a full sync (so podcasts and episodes are retrieved)
+        SyncManager.syncReason = .login
+        ServerSettings.clearLastSyncTime()
+        UserDefaults.standard.removeObject(forKey: "PCLastModifiedServerDate")
+
+        // Copy data from the previous corrupted database (if possible)
+        alert = ShiftyLoadingAlert(title: "Corrupted database. Recovering...")
+        alert?.showAlert(self, hasProgress: false, completion: nil)
+        DataManager.sharedManager.copyAllData()
+
+        alert?.hideAlert(true, completion: {
+            // Start the full sync
+            let controller = SyncSigninViewController()
+            controller.loginAgain = true
+            SceneHelper.rootViewController()?.dismiss(animated: true)
+            SceneHelper.rootViewController()?.present(controller, animated: true, completion: nil)
+        })
+    }
+
     override func viewDidLoad() {
         super.viewDidLoad()
 
+        fixTarBarTraitCollectionOnIpadForiOS18()
+
+        pcTabs = [.podcasts, .filter, .discover, .upNext, .profile]
+
+        var vcsInTab = [UIViewController]()
+
         let podcastsController = PodcastListViewController()
-        podcastsController.tabBarItem = UITabBarItem(title: L10n.podcastsPlural, image: UIImage(named: "podcasts_tab"), tag: tabs.firstIndex(of: .podcasts)!)
+        podcastsController.tabBarItem = UITabBarItem(title: L10n.podcastsPlural, image: UIImage(named: "podcasts_tab"), tag: pcTabs.firstIndex(of: .podcasts)!)
 
         let filtersViewController = PlaylistsViewController()
-        filtersViewController.tabBarItem = UITabBarItem(title: L10n.filters, image: UIImage(named: "filters_tab"), tag: tabs.firstIndex(of: .filter)!)
+        if FeatureFlag.playlistsRebranding.enabled {
+            filtersViewController.tabBarItem = UITabBarItem(title: L10n.playlists, image: UIImage(named: "playlists_tab"), tag: pcTabs.firstIndex(of: .filter)!)
+        } else {
+            filtersViewController.tabBarItem = UITabBarItem(title: L10n.filters, image: UIImage(named: "filters_tab"), tag: pcTabs.firstIndex(of: .filter)!)
+        }
 
-        let discoverViewController = DiscoverViewController(coordinator: DiscoverCoordinator())
-        discoverViewController.tabBarItem = UITabBarItem(title: L10n.discover, image: UIImage(named: "discover_tab"), tag: tabs.firstIndex(of: .discover)!)
+        let discoverViewController = DiscoverCollectionViewController(coordinator: DiscoverCoordinator())
+
+        discoverViewController.tabBarItem = UITabBarItem(title: L10n.discover, image: UIImage(named: "discover_tab"), tag: pcTabs.firstIndex(of: .discover)!)
 
         let profileViewController = ProfileViewController()
         profileViewController.tabBarItem = profileTabBarItem
 
+        let upNextViewController = UpNextViewController(source: .tabBar, showingInTab: true)
+        upNextViewController.tabBarItem = UITabBarItem(title: L10n.upNext, image: UIImage(named: "upnext_tab"), tag: pcTabs.firstIndex(of: .upNext)!)
+        vcsInTab = [podcastsController, filtersViewController, discoverViewController, upNextViewController, profileViewController]
+
         displayEndOfYearBadgeIfNeeded()
 
-        viewControllers = [podcastsController, filtersViewController, discoverViewController, profileViewController].map { SJUIUtils.navController(for: $0) }
+        viewControllers = vcsInTab.map { SJUIUtils.navController(for: $0) }
         selectedIndex = UserDefaults.standard.integer(forKey: Constants.UserDefaults.lastTabOpened)
 
         // Track the initial tab opened event
-        trackTabOpened(tabs[selectedIndex], isInitial: true)
+        trackTabOpened(pcTabs[selectedIndex], isInitial: true)
 
         NavigationManager.sharedManager.mainViewControllerDidLoad(controller: self)
         setupMiniPlayer()
@@ -80,7 +121,58 @@ class MainTabBarController: UITabBarController, NavigationProtocol {
             viewDidAppearBefore = true
         }
 
+        // if this key was never set lets default to Discovery or Podcast depending of podcasts followed
+        if UserDefaults.standard.object(forKey: Constants.UserDefaults.lastTabOpened) == nil {
+            selectedIndex = DataManager.sharedManager.podcastCount() > 0 ? Tab.podcasts.rawValue: Tab.discover.rawValue
+        }
+
         showInitialOnboardingIfNeeded()
+
+        updateDatabaseIndexes()
+        optimizeDatabaseIfNeeded()
+
+        if DataManager.loginAgain {
+            loginAgain()
+        }
+    }
+
+    /// Update database indexes and delete unused columns
+    /// This is outside of migrations and done just once
+    /// because for larger databases it's very time consuming
+    private func updateDatabaseIndexes() {
+        guard !Settings.upgradedIndexes else {
+            return
+        }
+
+        DispatchQueue.global(qos: .background).async { [weak self] in
+            guard let self else { return }
+
+            if DataManager.sharedManager.podcastCount() > 100 {
+                self.presentLoader()
+            }
+            DataManager.sharedManager.cleanUp()
+            self.dismissLoader()
+            Settings.upgradedIndexes = true
+        }
+    }
+
+    private func optimizeDatabaseIfNeeded() {
+        guard
+            let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String,
+            appVersion != Settings.lastAppVersionThatRunVacuum,
+            FeatureFlag.runVacuumOnVersionUpdate.enabled
+        else {
+            return
+        }
+        Settings.lastAppVersionThatRunVacuum = appVersion
+        DispatchQueue.global(qos: .background).async { [weak self] in
+            guard let self else { return }
+            if DataManager.sharedManager.podcastCount() > 100 {
+                presentLoader()
+            }
+            DataManager.sharedManager.vacuumDatabase()
+            dismissLoader()
+        }
     }
 
     private func showInitialOnboardingIfNeeded() {
@@ -89,15 +181,37 @@ class MainTabBarController: UITabBarController, NavigationProtocol {
             return
         }
 
-        NavigationManager.sharedManager.navigateTo(NavigationManager.onboardingFlow, data: ["flow": OnboardingFlow.Flow.initialOnboarding])
+        if FeatureFlag.encourageAccountCreation.enabled,
+           !Settings.hasShownInformationalViewModal,
+           Settings.hasSeenInitialOnboardingBefore,
+           (UIApplication.shared.delegate as? AppDelegate)?.appInstallState == .updated {
+            NavigationManager.sharedManager.navigateTo(NavigationManager.onboardingFlow, data: ["flow": OnboardingFlow.Flow.encourageAccountCreation])
+        } else {
+            NavigationManager.sharedManager.navigateTo(NavigationManager.onboardingFlow, data: ["flow": OnboardingFlow.Flow.initialOnboarding])
+        }
 
         // Set the flag so the user won't see the on launch flow again
         Settings.shouldShowInitialOnboardingFlow = false
     }
 
+    private func fixTarBarTraitCollectionOnIpadForiOS18() {
+        if #available(iOS 18.0, *),
+           UIDevice.current.userInterfaceIdiom == .pad {
+            traitOverrides.horizontalSizeClass = .compact
+            if let rootHorizontalSizeClass = view.window?.traitCollection.horizontalSizeClass {
+                tabBar.traitOverrides.horizontalSizeClass = rootHorizontalSizeClass
+                if let viewControllers {
+                    for vc in viewControllers {
+                        vc.traitOverrides.horizontalSizeClass = rootHorizontalSizeClass
+                    }
+                }
+            }
+        }
+    }
+
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
-
+        fixTarBarTraitCollectionOnIpadForiOS18()
         fireSystemThemeMayHaveChanged()
     }
 
@@ -132,7 +246,7 @@ class MainTabBarController: UITabBarController, NavigationProtocol {
         }
 
         if tabIndex != selectedIndex {
-            let tab = tabs[tabIndex]
+            let tab = pcTabs[tabIndex]
             trackTabOpened(tab)
             AnalyticsHelper.tabSelected(tab: tab)
         }
@@ -166,6 +280,18 @@ class MainTabBarController: UITabBarController, NavigationProtocol {
 
         let folderController = FolderViewController(folder: folder)
         navController.pushViewController(folderController, animated: true)
+    }
+
+    func navigateToSuggestedFolders() {
+        guard let navController = selectedViewController as? UINavigationController else { return }
+
+        navController.popToRootViewController(animated: false)
+
+        guard let podcastListController = navController.topViewController as? PodcastListViewController else {
+            return
+        }
+
+        podcastListController.showSuggestedFolders()
     }
 
     func navigateToPodcast(_ podcast: Podcast) {
@@ -207,7 +333,7 @@ class MainTabBarController: UITabBarController, NavigationProtocol {
         }
     }
 
-    func navigateToEpisode(_ episodeUuid: String, podcastUuid: String?) {
+    func navigateToEpisode(_ episodeUuid: String, podcastUuid: String?, timestamp: TimeInterval?) {
         if let navController = selectedViewController as? UINavigationController {
             navController.dismiss(animated: false, completion: nil)
 
@@ -216,7 +342,8 @@ class MainTabBarController: UITabBarController, NavigationProtocol {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5.seconds) {
                 if EpisodeLoadingController.needsLoading(uuid: episodeUuid), let podcastUuid {
                     let episodeController = EpisodeLoadingController(episodeUuid: episodeUuid,
-                                                                 podcastUuid: podcastUuid)
+                                                                     podcastUuid: podcastUuid,
+                                                                     timestamp: timestamp)
 
                     let nav = UINavigationController(rootViewController: episodeController)
                     nav.modalPresentationStyle = .formSheet
@@ -224,7 +351,7 @@ class MainTabBarController: UITabBarController, NavigationProtocol {
 
                     navController.present(nav, animated: true)
                 } else {
-                    let episodeController = EpisodeDetailViewController(episodeUuid: episodeUuid, source: .homeScreenWidget)
+                    let episodeController = EpisodeDetailViewController(episodeUuid: episodeUuid, source: .homeScreenWidget, timestamp: timestamp)
                     episodeController.modalPresentationStyle = .formSheet
 
                     navController.present(episodeController, animated: true)
@@ -237,16 +364,58 @@ class MainTabBarController: UITabBarController, NavigationProtocol {
         switchToTab(.discover)
     }
 
-    func navigateToProfile(_ animated: Bool) {
-        switchToTab(.profile)
+    func navigateToDiscover(category: String, animated: Bool) {
+        switchToTab(.discover)
+        if let index = pcTabs.firstIndex(of: .discover),
+           let navController = viewControllers?[safe: index] as? UINavigationController {
+            navController.popToRootViewController(animated: false)
+            if let discoverDelegate = navController.topViewController as? DiscoverDelegate {
+                discoverDelegate.navigateTo(category: category)
+            }
+        }
     }
 
-    func navigateToFilter(_ filter: EpisodeFilter, animated: Bool) {
-        if !switchToTab(.filter) { return }
-
-        if let navController = viewControllers?[safe: 1] as? UINavigationController, let filtersViewController = navController.viewControllers[safe: 0] as? PlaylistsViewController {
-            filtersViewController.showFilter(filter)
+    func navigateToDiscover(listID: String, animated: Bool) {
+        switchToTab(.discover)
+        if let index = pcTabs.firstIndex(of: .discover),
+           let navController = viewControllers?[safe: index] as? UINavigationController {
+            navController.popToRootViewController(animated: false)
+            if let discoverDelegate = navController.topViewController as? DiscoverDelegate {
+                discoverDelegate.navigateTo(listID: listID)
+            }
         }
+    }
+
+    func navigateToUpNext(_ animated: Bool) {
+        switchToTab(.upNext)
+    }
+
+    func navigateToProfile(row: ProfileViewController.TableRow? = nil, animated: Bool) {
+        switchToTab(.profile)
+        guard let navController = selectedViewController as? UINavigationController else {
+            return
+        }
+        navController.popToRootViewController(animated: animated)
+        guard let profileViewController = navController.topViewController as? ProfileViewController,
+            let row else {
+            return
+        }
+        profileViewController.navigateToRow(row)
+    }
+
+    func navigateToFilter(_ filter: EpisodeFilter?, animated: Bool) {
+        guard switchToTab(.filter) else { return }
+
+        guard let navController = selectedViewController as? UINavigationController else {
+            return
+        }
+        navController.popToRootViewController(animated: false)
+
+        guard let filter,
+              let filtersViewController = navController.topViewController as? PlaylistsViewController else {
+            return
+        }
+        filtersViewController.showFilter(filter)
     }
 
     func navigateToEditFilter(_ filter: EpisodeFilter) {
@@ -255,6 +424,20 @@ class MainTabBarController: UITabBarController, NavigationProtocol {
 
     func navigateToAddFilter() {
         switchToTab(.filter)
+    }
+
+    func presentManualPlaylistsChooser(for episode: Episode, rootViewController: UIViewController?) {
+        guard let navController = selectedViewController as? UINavigationController else {
+            return
+        }
+        let manualPlaylistsChooser = ManualPlaylistsChooserViewController(episode: episode)
+        let navVC = SJUIUtils.navController(for: manualPlaylistsChooser)
+        if presentedViewController is PlayerContainerViewController {
+            presentedViewController?.present(navVC, animated: true, completion: nil)
+        } else {
+            let root = rootViewController ?? navController.topViewController
+            root?.present(navVC, animated: true, completion: nil)
+        }
     }
 
     func navigateToAddCustom(_ url: URL) {
@@ -295,7 +478,7 @@ class MainTabBarController: UITabBarController, NavigationProtocol {
         // If we're already presenting a view, then present from that view if possible
         let presentingController = presentedViewController ?? view.window?.rootViewController
 
-        let controller = OnboardingFlow.shared.begin(flow: flow, source: source.rawValue, context: context)
+        let controller = OnboardingFlow.shared.begin(flow: flow, source: source, context: context)
         presentingController?.present(controller, animated: true, completion: nil)
     }
 
@@ -348,13 +531,36 @@ class MainTabBarController: UITabBarController, NavigationProtocol {
         switchToTab(.filter)
     }
 
-    func showSettingsAppearance() {
+    func showSettings(row: SettingsViewController.TableRow?) {
+        switchToTab(.profile)
+        guard let navController = selectedViewController as? UINavigationController else { return }
+
+        if navController.presentedViewController != nil {
+            navController.dismiss(animated: false)
+        }
+
+        navController.popViewController(animated: false)
+        let settingViewController = SettingsViewController()
+        navController.pushViewController(settingViewController, animated: row == nil)
+
+        guard let row else { return }
+
+        settingViewController.selectRow(row)
+    }
+
+    func showSettingsAppearance(showThemeSelection: Bool = false) {
         switchToTab(.profile)
         if let navController = selectedViewController as? UINavigationController {
             navController.popToRootViewController(animated: false)
 
             navController.pushViewController(SettingsViewController(), animated: false)
-            navController.pushViewController(AppearanceViewController(), animated: true)
+            let appearanceViewController = AppearanceViewController()
+            navController.pushViewController(appearanceViewController, animated: !showThemeSelection)
+            if showThemeSelection {
+                appearanceViewController.presentThemePicker(selectedTheme: Theme.preferredLightTheme()) { [weak self] theme in
+                    Theme.setPreferredLightTheme(theme, systemIsDark: self?.traitCollection.userInterfaceStyle == .dark)
+                }
+            }
         }
     }
 
@@ -364,6 +570,19 @@ class MainTabBarController: UITabBarController, NavigationProtocol {
         if let navController = selectedViewController as? UINavigationController {
             navController.popToRootViewController(animated: false)
         }
+    }
+
+    func showRedeemGuestPass(url: URL) {
+        switchToTab(.profile)
+
+        guard let navController = selectedViewController as? UINavigationController else {
+            return
+        }
+
+        navController.popToRootViewController(animated: false)
+        navController.dismiss(animated: true)
+
+        ReferralsCoordinator.shared.startClaimFlow(from: navController, referralURL: url)
     }
 
     func showHeadphoneSettings() {
@@ -379,6 +598,32 @@ class MainTabBarController: UITabBarController, NavigationProtocol {
             navController.popToRootViewController(animated: false)
             navController.pushViewController(SettingsViewController(), animated: false)
             navController.pushViewController(HeadphoneSettingsViewController(), animated: true)
+        }
+    }
+
+    func showGeneralSettings(row: GeneralSettingsViewController.TableRow?) {
+        let state = NavigationManager.sharedManager.miniPlayer?.playerOpenState
+
+        // Dismiss any presented views if the player is not already open/dismissing since it will dismiss itself
+        if state != .open, state != .animating {
+            dismissPresentedViewController()
+        }
+
+        switchToTab(.profile)
+        if let navController = selectedViewController as? UINavigationController {
+            navController.popToRootViewController(animated: false)
+            navController.pushViewController(SettingsViewController(), animated: false)
+            let generalSettingsController = GeneralSettingsViewController()
+            generalSettingsController.scrollToRow = row
+            navController.pushViewController(generalSettingsController, animated: true)
+        }
+    }
+
+    func showSignUp() {
+        switchToTab(.podcasts)
+        selectedViewController?.dismiss(animated: false)
+        if let controller = view.window?.rootViewController {
+            showSubscriptionRequired(controller, source: .unknown, context: nil, flow: .none)
         }
     }
 
@@ -421,7 +666,7 @@ class MainTabBarController: UITabBarController, NavigationProtocol {
     }
 
     func showOnboardingFlow(flow: OnboardingFlow.Flow?) {
-        let controller = OnboardingFlow.shared.begin(flow: flow ?? .initialOnboarding)
+        let controller = OnboardingFlow.shared.begin(flow: flow ?? .initialOnboarding, source: .onboarding)
         guard let presentedViewController else {
             present(controller, animated: true)
             return
@@ -453,7 +698,7 @@ class MainTabBarController: UITabBarController, NavigationProtocol {
             miniPlayer.closeFullScreenPlayer()
         }
 
-        selectedIndex = tabs.firstIndex(of: tab)!
+        selectedIndex = pcTabs.firstIndex(of: tab)!
 
         return true
     }
@@ -462,11 +707,13 @@ class MainTabBarController: UITabBarController, NavigationProtocol {
 
     @objc private func profileSeen() {
         profileTabBarItem.badgeValue = nil
-        Settings.showBadgeForEndOfYear = false
+        if let year = endOfYear.storyModelType?.year {
+            Settings.setShowBadgeForEndOfYear(false, year: year)
+        }
     }
 
     func observersForEndOfYearStats() {
-        guard FeatureFlag.endOfYear.enabled else {
+        guard FeatureFlag.endOfYear.enabled || FeatureFlag.endOfYear2024.enabled || FeatureFlag.endOfYear2025.enabled else {
             return
         }
 
@@ -509,6 +756,7 @@ class MainTabBarController: UITabBarController, NavigationProtocol {
     // MARK: - End of Year
 
     private func updateTabBarColor() {
+        self.view.backgroundColor = AppTheme.viewBackgroundColor()
         let appearance = UITabBarAppearance()
         appearance.configureWithOpaqueBackground()
         appearance.backgroundColor = AppTheme.tabBarBackgroundColor()
@@ -529,7 +777,7 @@ class MainTabBarController: UITabBarController, NavigationProtocol {
     }
 
     private func displayEndOfYearBadgeIfNeeded() {
-        if EndOfYear.isEligible && Settings.showBadgeForEndOfYear {
+        if EndOfYear.isEligible, let year = endOfYear.storyModelType?.year, Settings.showBadgeForEndOfYear(year) {
             profileTabBarItem.badgeValue = "●"
         }
     }
@@ -601,12 +849,19 @@ class MainTabBarController: UITabBarController, NavigationProtocol {
     // This code simple checks if the tab bar is already presenting something and, if yes,
     // present the VC through the presentedViewController
     override func present(_ viewControllerToPresent: UIViewController, animated flag: Bool, completion: (() -> Void)? = nil) {
-        if FeatureFlag.newPlayerTransition.enabled, let presentedViewController, !presentedViewController.isBeingDismissed {
+        if let presentedViewController, !presentedViewController.isBeingDismissed {
             presentedViewController.present(viewControllerToPresent, animated: flag, completion: completion)
             return
         }
 
         super.present(viewControllerToPresent, animated: flag, completion: completion)
+    }
+
+    override func motionEnded(_ motion: UIEvent.EventSubtype, with event: UIEvent?) {
+        super.motionEnded(motion, with: event)
+        if motion == .motionShake && Settings.shakeToRestartSleepTimer {
+            PlaybackManager.shared.restartSleepTimer()
+        }
     }
 }
 
@@ -640,7 +895,7 @@ private extension MainTabBarController {
         let message = title == L10n.bookmarkDefaultTitle ? L10n.bookmarkAdded : L10n.bookmarkAddedNotification(title)
 
         let action = Toast.Action(title: L10n.changeBookmarkTitle) { [weak self] in
-            let controller = BookmarkEditTitleViewController(manager: bookmarkManager, bookmark: bookmark, state: .updating, onDismiss: { [weak self] updatedTitle in
+            let controller = BookmarkEditTitleViewController(manager: bookmarkManager, bookmark: bookmark, state: .updating, onDismiss: { [weak self] updatedTitle, cancel in
                 guard title != updatedTitle else { return }
 
                 self?.handleBookmarkTitleUpdated(updatedTitle: updatedTitle)
@@ -689,6 +944,8 @@ private extension MainTabBarController {
             event = .discoverTabOpened
         case .profile:
             event = .profileTabOpened
+        case .upNext:
+            event = .upNextTabOpened
         }
 
         Analytics.track(event, properties: ["initial": isInitial])
@@ -708,9 +965,18 @@ private extension MainTabBarController {
     func showWhatsNewIfNeeded() {
         guard let controller = view.window?.rootViewController else { return }
 
-        if let whatsNewViewController = appDelegate()?.whatsNew?.viewControllerToShow() {
+        if let whatsNewViewController = appDelegate()?.whatsNew.viewControllerToShow() {
             controller.present(whatsNewViewController, animated: true)
             isShowingWhatsNew = true
         }
+    }
+}
+
+// MARK: - Notifications
+
+extension MainTabBarController {
+
+    func showNotificationsPermissions() {
+        present(NotificationsPermissionsViewModel.makeController(), animated: true)
     }
 }

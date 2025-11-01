@@ -1,4 +1,4 @@
-// swift-tools-version: 5.5
+// swift-tools-version: 5.7
 // The swift-tools-version declares the minimum version of Swift required to build this package.
 
 import PackageDescription
@@ -6,7 +6,7 @@ import PackageDescription
 let package = Package(
     name: "PocketCastsServer",
     platforms: [
-        .iOS(.v15), .watchOS(.v7)
+        .iOS(.v16), .watchOS(.v9)
     ], products: [
         .library(
             name: "PocketCastsServer",
@@ -15,8 +15,8 @@ let package = Package(
         )
     ],
     dependencies: [
-        .package(url: "https://github.com/SwiftyJSON/SwiftyJSON.git", from: "5.0.0"),
         .package(url: "https://github.com/apple/swift-protobuf.git", from: "1.0.0"),
+        .package(url: "https://github.com/danielebogo/Swime", branch: "master"),
         .package(path: "../DataModel/"),
         .package(path: "../Utils/")
     ],
@@ -25,9 +25,9 @@ let package = Package(
             name: "PocketCastsServer",
             dependencies: [
                 .product(name: "SwiftProtobuf", package: "swift-protobuf"),
+                .product(name: "Swime", package: "Swime"),
                 .product(name: "PocketCastsDataModel", package: "DataModel"),
-                .product(name: "PocketCastsUtils", package: "Utils"),
-                "SwiftyJSON"
+                .product(name: "PocketCastsUtils", package: "Utils")
             ],
             path: "Sources",
             linkerSettings: [
@@ -38,7 +38,8 @@ let package = Package(
         .testTarget(
             name: "PocketCastsServerTests",
             dependencies: ["PocketCastsServer"],
-            path: "Tests"
+            path: "Tests",
+            resources: [.copy("Fixtures")]
         )
     ]
 )

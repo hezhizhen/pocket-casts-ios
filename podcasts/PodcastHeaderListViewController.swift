@@ -8,18 +8,20 @@ class PodcastHeaderListViewController: PCViewController, UITableViewDataSource, 
     var showRankingNumber = false
     var labelTitle: String?
 
-    @IBOutlet var chartsTable: UITableView! {
-        didSet {
-            chartsTable.applyInsetForMiniPlayer()
-        }
-    }
+    @IBOutlet var chartsTable: UITableView!
 
     private weak var delegate: DiscoverDelegate?
     private static let cellId = "DiscoverCell"
     private static let featuredCellId = "FeaturedTableViewCell"
+    private var source: URL?
+    private var isAuthenticated: Bool
 
-    init(podcasts: [DiscoverPodcast]) {
+    init(podcasts: [DiscoverPodcast], source: String?, isAuthenticated: Bool = false) {
         self.podcasts = podcasts
+        if let source {
+            self.source = URL(string: source)
+        }
+        self.isAuthenticated = isAuthenticated
 
         super.init(nibName: "PodcastHeaderListViewController", bundle: nil)
     }
@@ -34,12 +36,27 @@ class PodcastHeaderListViewController: PCViewController, UITableViewDataSource, 
 
         chartsTable.register(UINib(nibName: "DiscoverPodcastTableCell", bundle: nil), forCellReuseIdentifier: PodcastHeaderListViewController.cellId)
         chartsTable.register(UINib(nibName: "FeaturedTableViewCell", bundle: nil), forCellReuseIdentifier: PodcastHeaderListViewController.featuredCellId)
+
+        if source != nil && isAuthenticated == false {
+            customRightBtn = UIBarButtonItem(image: UIImage(named: "podcast-share"), style: .plain, target: self, action: #selector(handleShare))
+        }
+
+        insetAdjuster.setupInsetAdjustmentsForMiniPlayer(scrollView: chartsTable)
+
+        chartsTable.updateContentInset(multiSelectEnabled: false)
     }
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
 
         chartsTable.reloadData()
+    }
+
+    @objc private func handleShare() {
+        guard let source = source?.deletingPathExtension() else { return }
+        Analytics.track(.discoverListShareTapped)
+        let activityViewController = UIActivityViewController(activityItems: [source], applicationActivities: nil)
+        present(activityViewController, animated: true)
     }
 
     // MARK: - UITableView Methods

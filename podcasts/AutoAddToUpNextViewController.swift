@@ -59,7 +59,7 @@ class AutoAddToUpNextViewController: PCViewController, UITableViewDelegate, UITa
 
         let cell = tableView.dequeueReusableCell(withIdentifier: podcastDisclosureCellId, for: indexPath) as! PodcastDisclosureCell
         let podcast = autoDownloadPodcasts[indexPath.row]
-        let autoDownloadSetting = AutoAddToUpNextSetting(rawValue: podcast.autoAddToUpNext) ?? .addLast
+        let autoDownloadSetting = podcast.autoAddToUpNextSetting() ?? .addLast
         cell.populate(from: podcast, secondaryText: autoDownloadSetting.description)
 
         return cell
@@ -90,6 +90,7 @@ class AutoAddToUpNextViewController: PCViewController, UITableViewDelegate, UITa
                 options.show(statusBarStyle: preferredStatusBarStyle)
             case .selectPodcasts:
                 let podcastSelectViewController = PodcastChooserViewController()
+                podcastSelectViewController.analyticsSource = .autoAdd
                 podcastSelectViewController.delegate = self
                 let allPodcasts = DataManager.sharedManager.allPodcasts(includeUnsubscribed: false)
                 podcastSelectViewController.selectedUuids = allPodcasts.filter { $0.autoAddToUpNextOn() }.map(\.uuid)
@@ -143,8 +144,8 @@ class AutoAddToUpNextViewController: PCViewController, UITableViewDelegate, UITa
     }
 
     private func addActionForPodcast(podcast: Podcast, setting: AutoAddToUpNextSetting, label: String, to: OptionsPicker) {
-        let action = OptionAction(label: label, selected: podcast.autoAddToUpNext == setting.rawValue) { [weak self] in
-            podcast.autoAddToUpNext = setting.rawValue
+        let action = OptionAction(label: label, selected: podcast.autoAddToUpNextSetting() == setting) { [weak self] in
+            podcast.setAutoAddToUpNext(setting: setting)
             DataManager.sharedManager.save(podcast: podcast)
             NotificationCenter.postOnMainThread(notification: Constants.Notifications.podcastUpdated, object: podcast.uuid)
             self?.mainTable.reloadData()

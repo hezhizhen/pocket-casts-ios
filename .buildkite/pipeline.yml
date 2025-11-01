@@ -1,41 +1,76 @@
-# Nodes with values to reuse in the pipeline.
-common_params:
-  # Common plugin settings to use with the `plugins` key.
-  - &common_plugins
-    - automattic/a8c-ci-toolkit#2.15.1
-  # Common environment values to use with the `env` key.
-  - &common_env
-    # If you update the image to a newer Xcode version, don't forget to also update the badge in the README.md file accordingly for consistency
-    IMAGE_ID: xcode-15.0.1
-  # Common agents values to use with the `agents` key.
-  - &common_agents
-    queue: mac
+# yaml-language-server: $schema=https://raw.githubusercontent.com/buildkite/pipeline-schema/main/schema.json
+---
+
+# Variables used in this pipeline are defined in `shared-pipeline-vars`, which is `source`'d before calling `buidkite-agent pipeline upload`
+
+env:
+  IMAGE_ID: $IMAGE_ID
 
 steps:
   - label: Build and Test
     command: .buildkite/commands/build.sh
-    agents: *common_agents
-    env: *common_env
-    plugins: *common_plugins
+    agents:
+      queue: mac
+    plugins: [$CI_TOOLKIT]
 
   - group: "Linters"
     steps:
       - label: "☢️ Danger - PR Check"
-        command: .buildkite/commands/danger-pr-check.sh
-        plugins:
-          - docker#v5.8.0:
-              image: "public.ecr.aws/docker/library/ruby:3.2.2"
-              propagate-environment: true
-              environment:
-                - "DANGER_GITHUB_API_TOKEN"
+        command: danger
+        key: danger
         if: "build.pull_request.id != null"
-        agents:
-          queue: "default"
         retry:
           manual:
             permit_on_passed: true
+        agents:
+          queue: "linter"
+
+      - label: ":swift: SwiftLint"
+        command: swiftlint
+        notify:
+          - github_commit_status:
+              context: "SwiftLint"
+        agents:
+          queue: "linter"
 
       - label: ":sleuth_or_spy: Lint Localized Strings Format"
-        command: lint_localized_strings_format
-        plugins: *common_plugins
-        env: *common_env
+        command: |
+          if .buildkite/commands/should-skip-job.sh --job-type localization; then
+            exit 0
+          fi
+
+          lint_localized_strings_format
+        agents:
+          queue: mac
+        plugins: [$CI_TOOLKIT]
+
+  - input: Deploy Prototype Build
+    prompt: Share a Prototype Build via Firebase App Distribution?
+    key: prototype_triggered
+
+  - group: Prototype Build
+    depends_on: prototype_triggered
+    steps:
+      - label: Prototype Build - Build
+        key: build_prototype
+        command: .buildkite/commands/prototype-build.sh
+        agents:
+          queue: mac
+        plugins: [$CI_TOOLKIT]
+        # The folder name is are configured in Fastlane
+        artifact_paths:
+          - artifacts/*.ipa
+          - artifacts/*.app.dSYM.zip
+        notify:
+          - github_commit_status:
+              context: Prototype Build - Build
+
+      - label: Prototype Build - Upload
+        depends_on: build_prototype
+        command: .buildkite/commands/prototype-upload.sh
+        agents:
+          queue: mac
+        plugins: [$CI_TOOLKIT]
+        notify:
+          - github_commit_status:
+              context: Prototype Build - Upload

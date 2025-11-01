@@ -2,9 +2,16 @@ import UIKit
 
 class PCViewController: SimpleNotificationsViewController {
     var supportsGoogleCast = false
+    var largeTitleFont = UIFont.systemFont(ofSize: 31, weight: .bold)
 
     var googleCastBtn: UIBarButtonItem?
     var customRightBtn: UIBarButtonItem? {
+        didSet {
+            refreshRightButtons()
+        }
+    }
+
+    var extraRightButtons: [UIBarButtonItem] = [] {
         didSet {
             refreshRightButtons()
         }
@@ -29,7 +36,7 @@ class PCViewController: SimpleNotificationsViewController {
             castButton.addTarget(self, action: #selector(castButtonTapped), for: .touchUpInside)
 
             refreshRightButtons()
-        } else if let _ = customRightBtn {
+        } else if customRightBtn != nil || !extraRightButtons.isEmpty {
             refreshRightButtons()
         }
         setupNavBar(animated: false)
@@ -56,12 +63,11 @@ class PCViewController: SimpleNotificationsViewController {
         if let title = title, title.count > 0 {
             setupNavBar(animated: animated)
         }
+        refreshRightButtons()
     }
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-
-        refreshRightButtons()
 
         if supportsGoogleCast {
             NotificationCenter.default.addObserver(self, selector: #selector(refreshRightButtons), name: Constants.Notifications.googleCastStatusChanged, object: nil)
@@ -93,14 +99,15 @@ class PCViewController: SimpleNotificationsViewController {
     }
 
     @objc func refreshRightButtons() {
-        if supportsGoogleCast {
+        if supportsGoogleCast || !extraRightButtons.isEmpty {
             var buttons = [UIBarButtonItem]()
             if let customRightBtn = customRightBtn {
                 buttons.append(customRightBtn)
             }
-            if let googleCastBtn = googleCastBtn {
+            if let googleCastBtn = googleCastBtn, supportsGoogleCast {
                 buttons.append(googleCastBtn)
             }
+            buttons.append(contentsOf: extraRightButtons)
             navigationItem.rightBarButtonItems = buttons
         } else {
             navigationItem.rightBarButtonItems = nil
@@ -151,7 +158,7 @@ class PCViewController: SimpleNotificationsViewController {
         appearance.titleTextAttributes = [NSAttributedString.Key.foregroundColor: titleColor]
         appearance.largeTitleTextAttributes = [
             NSAttributedString.Key.foregroundColor: titleColor,
-            NSAttributedString.Key.font: UIFont.systemFont(ofSize: 31, weight: .bold)
+            NSAttributedString.Key.font: largeTitleFont
         ]
         appearance.shadowColor = nil
 
@@ -172,10 +179,6 @@ class PCViewController: SimpleNotificationsViewController {
         AppTheme.defaultStatusBarStyle()
     }
 
-    override var prefersHomeIndicatorAutoHidden: Bool {
-        appDelegate()?.miniPlayer()?.playerOpenState == .open
-    }
-
     @objc private func appWasBackgrounded() {
         handleAppDidEnterBackground()
     }
@@ -187,4 +190,6 @@ class PCViewController: SimpleNotificationsViewController {
     func handleAppDidEnterBackground() {}
     func handleAppWillBecomeActive() {}
     func handleThemeChanged() {}
+
+    var insetAdjuster = InsetAdjuster()
 }

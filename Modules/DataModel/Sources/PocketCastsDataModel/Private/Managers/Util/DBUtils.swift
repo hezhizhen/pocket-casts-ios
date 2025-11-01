@@ -1,5 +1,4 @@
-import FMDB
-
+import Foundation
 class DBUtils {
     class func convertDate(value: TimeInterval?) -> Date? {
         guard let value = value, value > 0 else { return nil }
@@ -22,7 +21,7 @@ class DBUtils {
         return "(?\(questionMarks))"
     }
 
-    class func nonNilStringFromColumn(resultSet rs: FMResultSet, columnName: String) -> String {
+    class func nonNilStringFromColumn(resultSet rs: PCDBResultSet, columnName: String) -> String {
         if let value = rs.string(forColumn: columnName) {
             return value
         }
@@ -49,6 +48,13 @@ class DBUtils {
 
         return random
     }
+
+    class func measureTime(_ action: () -> ()) -> TimeInterval {
+        let startDate = Date()
+        action()
+        let endDate = Date()
+        return startDate.distance(to: endDate)
+    }
 }
 
 // MARK: - DB Array Extension
@@ -69,19 +75,5 @@ extension Array where Element == String {
     /// Helper that returns a string joined by , for use in a db queries
     var columnString: String {
         joined(separator: ",")
-    }
-}
-
-// MARK: - FMDatabase Helpers
-
-extension FMDatabase {
-    func insert(into table: String, columns: [String], values: [Any?]) throws {
-        let query = """
-        INSERT INTO \(table) (
-            \(columns.columnString)
-        )
-        \(values.insertBindingValues)
-        """
-        try executeUpdate(query, values: values.databaseValues)
     }
 }

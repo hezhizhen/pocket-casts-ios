@@ -1,3 +1,4 @@
+import PocketCastsDataModel
 import UIKit
 
 extension PlaylistViewController: UITableViewDelegate, UITableViewDataSource {
@@ -19,10 +20,12 @@ extension PlaylistViewController: UITableViewDelegate, UITableViewDataSource {
             if isMultiSelectEnabled {
                 let optionPicker = OptionsPicker(title: nil, iconTintStyle: .primaryInteractive01)
                 let allAboveAction = OptionAction(label: L10n.selectAllAbove, icon: "selectall-up", action: { [] in
+                    Analytics.track(.filterSelectAllAbove)
                     self.tableView.selectAllAbove(indexPath: indexPath)
                 })
 
                 let allBelowAction = OptionAction(label: L10n.selectAllBelow, icon: "selectall-down", action: { [] in
+                    Analytics.track(.filterSelectAllBelow)
                     self.tableView.selectAllBelow(indexPath: indexPath)
                 })
                 optionPicker.addAction(action: allAboveAction)
@@ -49,7 +52,7 @@ extension PlaylistViewController: UITableViewDelegate, UITableViewDataSource {
         cell.playlist = .filter(uuid: filter.uuid)
         cell.delegate = self
         if let listEpisode = episodes[safe: indexPath.row] {
-            cell.populateFrom(episode: listEpisode.episode, tintColor: filter.playlistColor(), filterUuid: filter.uuid)
+            cell.populateFrom(episode: listEpisode.episode, tintColor: filter.playlistColor(), playlistUuid: filter.uuid)
             cell.shouldShowSelect = isMultiSelectEnabled
             if isMultiSelectEnabled {
                 cell.showTick = selectedEpisodesContains(uuid: listEpisode.episode.uuid)
@@ -102,6 +105,22 @@ extension PlaylistViewController: UITableViewDelegate, UITableViewDataSource {
             }
         } else {
             tableView.deselectRow(at: indexPath, animated: true)
+
+            if selectedEpisode.wasDeleted {
+                let episodeUuid = selectedEpisode.uuid
+                let view = ModalMessageViewController.episodeUnavailableAlert { [weak self] in
+                    guard let self = self else { return }
+                    DataManager.sharedManager.deleteEpisodes([episodeUuid], from: self.filter)
+                    self.refreshEpisodes(animated: true)
+                }
+                BottomSheetSwiftUIWrapper.present(
+                    view.environmentObject(Theme.sharedTheme),
+                    autoSize: true,
+                    showingGrabber: true,
+                    in: self
+                )
+                return
+            }
 
             let episodeController = EpisodeDetailViewController(episode: selectedEpisode, podcast: parentPodcast, source: .filters, playlist: .filter(uuid: filter.uuid))
             episodeController.modalPresentationStyle = .formSheet

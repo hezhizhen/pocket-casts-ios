@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import PocketCastsUtils
 
 protocol SearchResultsDelegate {
     func clearSearch()
@@ -18,9 +19,9 @@ class SearchResultsViewController: UIHostingController<AnyView> {
     private let searchResults: SearchResultsModel
     private let searchAnalyticsHelper: SearchAnalyticsHelper
 
-    init(source: AnalyticsSource) {
+    init(source: AnalyticsSource, showLocalResults: Bool = false) {
         searchAnalyticsHelper = SearchAnalyticsHelper(source: source)
-        self.searchResults = SearchResultsModel(analyticsHelper: searchAnalyticsHelper)
+        self.searchResults = SearchResultsModel(analyticsHelper: searchAnalyticsHelper, showLocalResults: showLocalResults)
         super.init(rootView: AnyView(
             SearchView()
             .setupDefaultEnvironment()
@@ -33,6 +34,14 @@ class SearchResultsViewController: UIHostingController<AnyView> {
 
     required init?(coder aDecoder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    func searchShown() {
+        searchAnalyticsHelper.trackShown()
+    }
+
+    func searchDismissed() {
+        searchAnalyticsHelper.trackDismissed()
     }
 }
 
@@ -49,7 +58,12 @@ extension SearchResultsViewController: SearchResultsDelegate {
 
     func performSearch(searchTerm: String, triggeredByTimer: Bool, completion: @escaping (() -> Void)) {
         displaySearch.isSearching = true
-        searchResults.search(term: searchTerm)
+
+        if FeatureFlag.searchPredictive.enabled, triggeredByTimer {
+            searchResults.predictiveSearch(term: searchTerm)
+        } else {
+            searchResults.search(term: searchTerm)
+        }
 
         if !triggeredByTimer {
             searchHistoryModel.add(searchTerm: searchTerm)

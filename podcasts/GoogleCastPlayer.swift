@@ -23,6 +23,10 @@ class GoogleCastPlayer: PlaybackProtocol {
         castManager.playSingleEpisode(episode)
     }
 
+    func isReadyToPlay() -> Bool {
+        castManager.hasCastSession()
+    }
+
     func playing() -> Bool {
         castManager.playing()
     }
@@ -121,5 +125,11 @@ class GoogleCastPlayer: PlaybackProtocol {
 
     func internalPlayerForVideoPlayback() -> AVPlayer? {
         nil
+    }
+
+    // MARK: - Volume
+
+    func setVolume(_ volume: Float) {
+        // not supported
     }
 }

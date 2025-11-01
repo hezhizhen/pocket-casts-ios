@@ -21,6 +21,19 @@ struct StorageManager {
     }
 
     @discardableResult
+    static func copyItem(at fromURL: URL, to toURL: URL, attributes: Attributes? = nil, options: Options? = nil) throws -> Bool {
+        if let options, options.contains(.overwriteExisting) {
+            removeItem(at: toURL)
+        }
+        try copyItem(at: fromURL, to: toURL)
+
+        let attrs = (attributes ?? [:]).merging(Constants.defaultAttributes) { current, _ in current }
+        setAttributes(attrs, of: toURL)
+
+        return true
+    }
+
+    @discardableResult
     static func createDirectory(atPath path: String, withIntermediateDirectories createIntermediates: Bool, attributes: Attributes? = nil) -> Bool {
         let attrs = (attributes ?? [:]).merging(Constants.defaultAttributes) { current, _ in current }
 
@@ -48,6 +61,10 @@ struct StorageManager {
 
     private static func moveItem(at fromURL: URL, to toURL: URL) throws {
         try fileManager.moveItem(at: fromURL, to: toURL)
+    }
+
+    private static func copyItem(at fromURL: URL, to toURL: URL) throws {
+        try fileManager.copyItem(at: fromURL, to: toURL)
     }
 
     // MARK: - Config

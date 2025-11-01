@@ -90,7 +90,12 @@ class VideoViewController: SimpleNotificationsViewController, AVPictureInPicture
     @IBOutlet var pipButton: UIButton!
 
     @IBOutlet var airplayButton: UIButton!
+
+    #if APPCLIP
+    @IBOutlet var castButton: UIButton!
+    #else
     @IBOutlet var castButton: PCGoogleCastButton!
+    #endif
 
     private var pipController: AVPictureInPictureController?
     @IBOutlet var controlsOverlay: UIView! {
@@ -117,10 +122,10 @@ class VideoViewController: SimpleNotificationsViewController, AVPictureInPicture
 
         view.backgroundColor = .black
 
-        let skipBackAmount = ServerSettings.skipBackTime()
+        let skipBackAmount = Settings.skipBackTime
         skipBackBtn.skipAmount = skipBackAmount
 
-        let skipFwdAmount = ServerSettings.skipForwardTime()
+        let skipFwdAmount = Settings.skipForwardTime
         skipForwardBtn.skipAmount = skipFwdAmount
     }
 

@@ -4,26 +4,16 @@ import PocketCastsDataModel
 import PocketCastsUtils
 import UIKit
 
-enum EffectsPlayerStrategy: Int {
-    case normalPlay = 1
-    case playAndCatchExceptionIfNeeded = 2
-    case playAndFallbackIfNeeded = 3
-}
-
 class EffectsPlayer: PlaybackProtocol, Hashable {
     private static let targetVolumeDbGain = 15.0 as Float
-
-    /// The maximum number this player will retry to restard an audio if it fails
-    private static let maxNumberOfRetries = 3
-
-    /// The current attempt number to start the player
-    private static var attemptNumber = 1
 
     private var engine: AVAudioEngine?
     private var player: AVAudioPlayerNode?
 
     private var timePitch: AVAudioUnitTimePitch?
     private var playbackSpeed = 0 as Double // AVAudioUnitTimePitch seems to not like us querying the rate sometimes, so store that as a separate variable
+
+    private var audioMixerNode: AVAudioMixerNode?
 
     // for volume boost
     private var highPassFilter: AVAudioUnitEffect?
@@ -51,11 +41,20 @@ class EffectsPlayer: PlaybackProtocol, Hashable {
     // this lock is to avoid race conditions where you're destroying the player while in the middle of setting it up (since the play method does its work asynchronously)
     private lazy var playerLock = NSLock()
 
+    private let serialSeekQueue = DispatchQueue(label: "effectsplayer.serial.queue")
+
+    private lazy var episodeArtwork = EpisodeArtwork()
+
     // MARK: - PlaybackProtocol Impl
 
     func loadEpisode(_ episode: BaseEpisode) {
         episodePath = episode.pathToDownloadedFile(pathFinder: DownloadManager.shared)
+        episodeArtwork.loadEmbeddedImage(asset: nil, podcastUuid: episode.parentIdentifier(), episodeUuid: episode.uuid)
         self.episode = episode
+    }
+
+    func isReadyToPlay() -> Bool {
+        audioReadTask != nil && audioPlayTask != nil
     }
 
     func playing() -> Bool {
@@ -84,6 +83,9 @@ class EffectsPlayer: PlaybackProtocol, Hashable {
             strongSelf.effects = PlaybackManager.shared.effects()
             strongSelf.playBufferManager = PlayBufferManager()
 
+            strongSelf.audioMixerNode = strongSelf.createAudioMixerNode()
+            strongSelf.engine?.attach(strongSelf.audioMixerNode!)
+
             // volume boost effects
             strongSelf.highPassFilter = strongSelf.createHighPassUnit()
             strongSelf.engine?.attach(strongSelf.highPassFilter!)
@@ -109,11 +111,15 @@ class EffectsPlayer: PlaybackProtocol, Hashable {
                 if strongSelf.cachedFrameCount == 0 {
                     // we haven't cached a frame count for this episode, do that now
                     strongSelf.cachedFrameCount = strongSelf.audioFile!.length
+                    if strongSelf.cachedFrameCount == 0 {
+                        // If don't have a frameCount we cannot use the effect player
+                        throw AVError(_nsError: NSError(domain: AVFoundationErrorDomain, code: AVError.fileFailedToParse.rawValue))
+                    }
                     DataManager.sharedManager.saveFrameCount(episode: episode, frameCount: strongSelf.cachedFrameCount)
                 }
             } catch {
                 strongSelf.playerLock.unlock()
-                PlaybackManager.shared.playbackDidFail(logMessage: error.localizedDescription, userMessage: nil)
+                PlaybackManager.shared.playbackDidFail(logMessage: error.localizedDescription, userMessage: nil, fallbackToDefaultPlayer: true)
                 return
             }
 
@@ -123,8 +129,7 @@ class EffectsPlayer: PlaybackProtocol, Hashable {
             // `AudioReadTask` we convert the mono segments to stereo
             // For more info, see: https://github.com/Automattic/pocket-casts-ios/issues/62
             var format: AVAudioFormat
-            if #available(iOS 16, *),
-               let audioFile = strongSelf.audioFile,
+            if let audioFile = strongSelf.audioFile,
                audioFile.processingFormat.channelCount == 1,
                let twoChannelsFormat = AVAudioFormat(standardFormatWithSampleRate: audioFile.processingFormat.sampleRate, channels: 2) {
                 FileLog.shared.addMessage("EffectsPlayer: converting mono to stereo")
@@ -133,7 +138,8 @@ class EffectsPlayer: PlaybackProtocol, Hashable {
                 format = strongSelf.audioFile!.processingFormat
             }
 
-            strongSelf.engine?.connect(strongSelf.player!, to: strongSelf.timePitch!, format: format)
+            strongSelf.engine?.connect(strongSelf.player!, to: strongSelf.audioMixerNode!, format: format)
+            strongSelf.engine?.connect(strongSelf.audioMixerNode!, to: strongSelf.timePitch!, format: format)
             strongSelf.engine?.connect(strongSelf.timePitch!, to: strongSelf.highPassFilter!, format: format)
             strongSelf.engine?.connect(strongSelf.highPassFilter!, to: strongSelf.dynamicsProcessor!, format: format)
             strongSelf.engine?.connect(strongSelf.dynamicsProcessor!, to: strongSelf.peakLimiter!, format: format)
@@ -156,16 +162,7 @@ class EffectsPlayer: PlaybackProtocol, Hashable {
                 return
             }
 
-            switch Settings.effectsPlayerStrategy {
-            case .normalPlay:
-                strongSelf.normalPlay()
-            case .playAndCatchExceptionIfNeeded:
-                strongSelf.playAndCatchExceptionIfNeeded()
-            case .playAndFallbackIfNeeded:
-                strongSelf.playAndFallbackIfNeeded()
-            default:
-                strongSelf.normalPlay()
-            }
+            strongSelf.playAndCatchExceptionIfNeeded()
 
             strongSelf.playerLock.unlock()
 
@@ -182,13 +179,6 @@ class EffectsPlayer: PlaybackProtocol, Hashable {
     }
 
     // MARK: - Play
-    /// We have three ways to start the player here. This is here to try
-    /// to fix one of our top-crashes which is related to EffectsPlayer initialization
-
-    /// Just play the player and don't deal with any exception
-    func normalPlay() {
-        player?.play()
-    }
 
     /// Try to play. If an exception happens, just pause it.
     func playAndCatchExceptionIfNeeded() {
@@ -200,18 +190,6 @@ class EffectsPlayer: PlaybackProtocol, Hashable {
             FileLog.shared.addMessage("EffectsPlayer: failed to start playback: \(error)")
             self.playerLock.unlock()
             PlaybackManager.shared.pause(userInitiated: false)
-        }
-    }
-
-    /// Try to play. If it fails, fallback to DefaultPlayer
-    func playAndFallbackIfNeeded() {
-        do {
-            try SJCommonUtils.catchException {
-                self.player?.play()
-            }
-        } catch {
-            self.playerLock.unlock()
-            PlaybackManager.shared.playbackDidFail(logMessage: error.localizedDescription, userMessage: nil, fallbackToDefaultPlayer: true)
         }
     }
 
@@ -236,19 +214,23 @@ class EffectsPlayer: PlaybackProtocol, Hashable {
     func seekTo(_ time: TimeInterval, completion: (() -> Void)?) {
         guard let readOperation = audioReadTask else { return }
 
-        lastSeekTime = max(0.1, time)
-        seeking = true
-        readOperation.seekTo(time, completion: { [weak self] seekedToEnd in
-            if !seekedToEnd {
-                completion?()
-            } else if !(self?.playBufferManager?.haveNotifiedPlayer.value ?? false) {
-                self?.playBufferManager?.haveNotifiedPlayer.value = true
-                FileLog.shared.addMessage("EffectsPlayer seeked passed end of episode, calling finished playing")
-                PlaybackManager.shared.playerDidFinishPlayingEpisode()
-            }
+        serialSeekQueue.async { [weak self] in
+            guard let self else { return }
 
-            self?.seeking = false
-        })
+            lastSeekTime = max(0.1, time)
+            seeking = true
+            readOperation.seekTo(time, completion: { [weak self] seekedToEnd in
+                if !seekedToEnd {
+                    completion?()
+                } else if !(self?.playBufferManager?.haveNotifiedPlayer.value ?? false) {
+                    self?.playBufferManager?.haveNotifiedPlayer.value = true
+                    FileLog.shared.addMessage("EffectsPlayer seeked passed end of episode, calling finished playing")
+                    PlaybackManager.shared.playerDidFinishPlayingEpisode()
+                }
+
+                self?.seeking = false
+            })
+        }
     }
 
     func currentTime() -> TimeInterval {
@@ -428,6 +410,10 @@ class EffectsPlayer: PlaybackProtocol, Hashable {
         }
     }
 
+    private func createAudioMixerNode() -> AVAudioMixerNode {
+        return AVAudioMixerNode()
+    }
+
     private func createTimePitchUnit() -> AVAudioUnitTimePitch {
         var componentDescription = AudioComponentDescription()
         componentDescription.componentType = kAudioUnitType_FormatConverter
@@ -472,5 +458,11 @@ class EffectsPlayer: PlaybackProtocol, Hashable {
 
     func hash(into hasher: inout Hasher) {
         hasher.combine(ObjectIdentifier(self))
+    }
+
+    // MARK: - Volume
+
+    func setVolume(_ volume: Float) {
+        audioMixerNode?.outputVolume = volume
     }
 }

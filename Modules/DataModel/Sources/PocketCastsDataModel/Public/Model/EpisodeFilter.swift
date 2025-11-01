@@ -28,9 +28,16 @@ public class EpisodeFilter: NSObject {
     @objc public var shorterThan = 0 as Int32
     @objc public var syncStatus = 0 as Int32
     @objc public var wasDeleted = false
+    @objc public var manual: Bool = false
+    @objc public var showArchivedEpisodes: Bool = false
 
     // Internal tracking
     public var isNew: Bool = false
+    public var podcastSmartRuleApplied: Bool = false
+    public var episodesSmartRuleApplied: Bool = false
+    public var releaseDateSmartRuleApplied: Bool = false
+    public var mediaTypeSmartRuleApplied: Bool = false
+    public var downloadStatusSmartRuleApplied: Bool = false
 
     public func setTitle(_ title: String?, defaultTitle: String) {
         guard let title = title, title.trimmingCharacters(in: .whitespacesAndNewlines).count > 0 else {

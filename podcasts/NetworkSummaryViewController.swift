@@ -86,10 +86,10 @@ class NetworkSummaryViewController: DiscoverPeekViewController, DiscoverSummaryP
 
     // MARK: - Populate From Data
 
-    func populateFrom(item: DiscoverItem) {
+    func populateFrom(item: DiscoverItem, region: String?, category: DiscoverCategory?) {
         guard let source = item.source else { return }
 
-        DiscoverServerHandler.shared.discoverNetworkList(source: source) { [weak self] podcastNetworks in
+        DiscoverServerHandler.shared.discoverNetworkList(source: source, authenticated: item.authenticated) { [weak self] podcastNetworks in
             guard let strongSelf = self, let podcastNetworks = podcastNetworks else { return }
 
             strongSelf.networks = podcastNetworks

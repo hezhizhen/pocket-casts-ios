@@ -1,4 +1,5 @@
 import UIKit
+import PocketCastsUtils
 
 class EpisodeFilterOverlayController: FilterSettingsOverlayController, UITableViewDataSource, UITableViewDelegate {
     static let episodeCellId = "CheckboxCellId"
@@ -16,6 +17,9 @@ class EpisodeFilterOverlayController: FilterSettingsOverlayController, UITableVi
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        if FeatureFlag.playlistsRebranding.enabled {
+            largeTitleFont = UIFont.systemFont(ofSize: 22, weight: .bold)
+        }
         tableView.register(UINib(nibName: "CheckboxCell", bundle: nil), forCellReuseIdentifier: EpisodeFilterOverlayController.episodeCellId)
 
         tableView.delegate = self
@@ -30,7 +34,28 @@ class EpisodeFilterOverlayController: FilterSettingsOverlayController, UITableVi
         setCurrentStatus()
 
         navigationController?.navigationBar.setValue(true, forKey: "hidesShadow")
-        addCloseButton()
+
+        if FeatureFlag.playlistsRebranding.enabled {
+            navigationItem.largeTitleDisplayMode = .always
+
+            handleThemeChanged()
+
+            saveButton.setTitle(L10n.playlistSmartRuleSaveButton, for: .normal)
+        } else {
+            addCloseButton()
+        }
+    }
+
+    override func addTableViewHeader() {
+        let headerView = ThemeableView()
+        headerView.style = .primaryUi01
+        if FeatureFlag.playlistsRebranding.enabled {
+            headerView.frame = CGRect(x: 0, y: 0, width: tableView.bounds.width, height: 10)
+        } else {
+            headerView.frame = CGRect(x: 0, y: 0, width: tableView.bounds.width, height: 26)
+        }
+        headerView.layoutIfNeeded()
+        tableView.tableHeaderView = headerView
     }
 
     // MARK: - TableView DataSource
@@ -63,12 +88,18 @@ class EpisodeFilterOverlayController: FilterSettingsOverlayController, UITableVi
         cell.episodeTitle.setLetterSpacing(-0.2)
         cell.selectButton.tag = tableRow.rawValue
         cell.selectButton.addTarget(self, action: #selector(selectButtonTapped), for: .touchUpInside)
-        cell.filterColor = filterToEdit.playlistColor()
+        if FeatureFlag.playlistsRebranding.enabled {
+            cell.episodeTitle.font = .systemFont(ofSize: 18, weight: .semibold)
+            cell.filterColor = AppTheme.colorForStyle(.primaryInteractive01)
+        } else {
+            cell.episodeTitle.font = .systemFont(ofSize: 16, weight: .medium)
+            cell.filterColor = filterToEdit.playlistColor()
+        }
         return cell
     }
 
     func tableView(_ tableView: UITableView, heightForRowAt indexPath: IndexPath) -> CGFloat {
-        51
+        FeatureFlag.playlistsRebranding.enabled ? 48 : 51
     }
 
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
@@ -93,10 +124,18 @@ class EpisodeFilterOverlayController: FilterSettingsOverlayController, UITableVi
 
         if filterFinished || filterUnplayed || filterPartiallyPlayed {
             saveButton.isEnabled = true
-            saveButton.backgroundColor = filterToEdit.playlistColor()
+            if FeatureFlag.playlistsRebranding.enabled {
+                saveButton.alpha = 1
+            } else {
+                saveButton.backgroundColor = filterToEdit.playlistColor()
+            }
         } else {
             saveButton.isEnabled = false
-            saveButton.backgroundColor = AppTheme.disabledButtonColor()
+            if FeatureFlag.playlistsRebranding.enabled {
+                saveButton.alpha = 0.4
+            } else {
+                saveButton.backgroundColor = AppTheme.disabledButtonColor()
+            }
         }
         tableView.reloadData()
     }
@@ -111,7 +150,26 @@ class EpisodeFilterOverlayController: FilterSettingsOverlayController, UITableVi
         filterToEdit.filterFinished = filterFinished
         filterToEdit.filterUnplayed = filterUnplayed
         filterToEdit.filterPartiallyPlayed = filterPartiallyPlayed
-
+        if FeatureFlag.playlistsRebranding.enabled {
+            filterToEdit.episodesSmartRuleApplied = true
+        }
         super.saveFilter()
+    }
+
+    override func handleThemeChanged() {
+        super.handleThemeChanged()
+
+        if FeatureFlag.playlistsRebranding.enabled {
+            saveButton.backgroundColor = AppTheme.colorForStyle(.primaryInteractive01)
+            changeNavTint(titleColor: AppTheme.colorForStyle(.primaryText01), iconsColor: AppTheme.colorForStyle(.primaryIcon03), backgroundColor: AppTheme.viewBackgroundColor())
+        }
+    }
+
+    override func dismissViewController() {
+        if FeatureFlag.playlistsRebranding.enabled {
+            navigationController?.popViewController(animated: true)
+        } else {
+            dismiss(animated: true, completion: nil)
+        }
     }
 }

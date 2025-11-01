@@ -6,73 +6,92 @@ struct AccountHeaderView: View {
     @EnvironmentObject var theme: Theme
     @ObservedObject var viewModel: AccountHeaderViewModel
 
+    @State private var showingChampion = false
+
     var body: some View {
         container { proxy in
-            SubscriptionProfileImage(viewModel: viewModel)
-                .frame(width: Constants.imageSize, height: Constants.imageSize)
-
-            ProfileInfoLabels(profile: viewModel.profile, alignment: .center, spacing: Constants.spacing)
-                .padding(.top, Constants.padding.labelsTop)
-
-            VStack {
+            VStack(spacing: FeatureFlag.newOnboardingUpgrade.enabled ? 8 : Constants.padding.vertical) {
+                SubscriptionProfileImage(viewModel: viewModel)
+                    .frame(width: Constants.imageSize, height: Constants.imageSize)
+                ProfileInfoLabels(profile: viewModel.profile, alignment: .center, spacing: Constants.spacing)
                 // Subscription badge
                 viewModel.subscription.map {
                     SubscriptionBadge(tier: $0.tier)
-                        .padding(.bottom, Constants.padding.badgeBottom)
                 }
-
-                // Subscription details labels
-                HStack {
-                    let (title, label) = subscriptionLabels
-
+                let (title, label, action) = subscriptionLabels
+                if label == nil, FeatureFlag.newAccountUpgradePromptFlow.enabled || FeatureFlag.newOnboardingUpgrade.enabled {
                     Text(title)
                         .fixedSize(horizontal: false, vertical: true)
+                        .foregroundColor(theme.primaryText02)
+                        .font(size: 11, style: .footnote, weight: .semibold)
+                } else {
+                    // Subscription details labels
+                    HStack {
+                        Text(title)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer()
+                        label
+                        .onTapGesture {
+                            action?()
+                        }
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .foregroundColor(theme.primaryText01)
+                    .font(size: 14, style: .subheadline, weight: .medium)
+                    .sheet(isPresented: $showingChampion) {
+                        ZStack {
+                            theme.primaryUi01.ignoresSafeArea()
 
-                    Spacer()
-
-                    label
-                        .fixedSize(horizontal: false, vertical: true)
+                            ChampionView()
+                                .presentationDetents([.medium])
+                        }
+                    }
                 }
-                .foregroundColor(theme.primaryText01)
-                .font(size: 14, style: .subheadline, weight: .medium)
             }
         }
     }
 
-    private var subscriptionLabels: (String, Text?) {
+    private var subscriptionLabels: (String, Text?, (() -> Void)?) {
         switch viewModel.viewState {
         case .freeAccount:
             // Show the free account status and the total listening time the user has
             return (
                 L10n.accountDetailsFreeAccount,
+                (FeatureFlag.newAccountUpgradePromptFlow.enabled || FeatureFlag.newOnboardingUpgrade.enabled) ? nil :
                 viewModel.stats.listeningTime.seconds.localizedTimeDescription.map {
                     Text(L10n.accountDetailsListenedFor($0))
-                }
+                },
+                nil
             )
         case .activeSubscription(_, let frequency, let expirationDate):
             // Show the next billing date, and how often their subscription reviews
             return (
                 L10n.nextPaymentFormat(DateFormatHelper.sharedHelper.longLocalizedFormat(expirationDate)),
-                frequency.localizedDescription.map { Text($0) }
+                frequency.localizedDescription.map { Text($0) },
+                nil
             )
         case .freeTrial(let remaining):
             // Show the time remaining in the free trial and the date it expires
             return (
                 L10n.plusFreeMembershipFormat(DateFormatHelper.sharedHelper.shortTimeRemaining(remaining).localizedCapitalized),
-                expirationLabel()
+                expirationLabel(),
+                nil
             )
         case .lifetime:
             // Lifetime membership, show a thank you message
             return (
                 L10n.subscriptionsThankYou,
-                Text(L10n.plusLifetimeMembership)
-                    .foregroundColor(theme.green)
+                Text(L10n.plusChampion)
+                    .foregroundColor(theme.green), {
+                        showingChampion.toggle()
+                }
             )
         case .paymentCancelled:
             // Show the cancelled label, and the date the subscription expires
             return (
                 L10n.plusPaymentCanceled,
-                expirationLabel()
+                expirationLabel(),
+                nil
             )
         }
     }
@@ -122,11 +141,10 @@ struct AccountHeaderView: View {
 
         enum padding {
             static let top = 30.0
-            static let bottom = 20.0
+            static let bottom = 16.0
             static let horizontal = 16.0
 
-            static let labelsTop = 5.0
-            static let badgeBottom = 10.0
+            static let vertical = 14.0
         }
     }
 }

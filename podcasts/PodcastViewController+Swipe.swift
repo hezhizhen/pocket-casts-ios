@@ -37,8 +37,12 @@ extension PodcastViewController: SwipeTableViewCellDelegate, SwipeHandler {
         "podcast_details"
     }
 
+    var swipeSourceType: SwipeSourceType {
+        .podcast
+    }
+
     func archivingRemovesFromList() -> Bool {
-        !(podcast?.showArchived ?? false)
+        !(podcast?.shouldShowArchived ?? false)
     }
 
     func actionPerformed(willBeRemoved: Bool) {
@@ -52,4 +56,15 @@ extension PodcastViewController: SwipeTableViewCellDelegate, SwipeHandler {
     func share(episode: Episode, at indexPath: IndexPath) {
         SharingHelper.shared.shareLinkTo(episode: episode, fromController: self, fromTableView: tableView(), at: indexPath)
     }
+
+    func addToManualPlaylist(episode: Episode, at: IndexPath) {
+        NavigationManager.sharedManager.navigateTo(
+            NavigationManager.manualPlaylistsChooserKey,
+            data: [
+                NavigationManager.manualPlaylistsChooserEpisodeKey: episode
+            ]
+        )
+    }
+
+    func removeFromManualPlaylist(episode: PocketCastsDataModel.Episode, at: IndexPath) { }
 }
