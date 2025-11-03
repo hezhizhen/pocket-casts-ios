@@ -242,8 +242,14 @@ extension SyncTask {
         }
 
         // only update the duration if we aren't actively playing this episode
+        // For downloaded episodes, trust the locally calculated duration from the actual audio file
+        // over the server's duration, as the server metadata may be incorrect
         if episodeItem.hasDuration, Int64(episode.duration) != episodeItem.duration.value, !isPlayerPlaying(episode: episode) {
-            DataManager.sharedManager.saveEpisode(duration: Double(episodeItem.duration.value), episode: episode, updateSyncFlag: false)
+            // Skip duration update for downloaded episodes - they have accurate duration from the audio file
+            let isDownloaded = episode.downloaded(pathFinder: DownloadManager.shared) || episode.downloadedForStreaming(pathFinder: DownloadManager.shared)
+            if !isDownloaded {
+                DataManager.sharedManager.saveEpisode(duration: Double(episodeItem.duration.value), episode: episode, updateSyncFlag: false)
+            }
         }
     }
 
