@@ -485,6 +485,22 @@ class EpisodeDataManager {
         save(fieldName: "sizeInBytes", value: fileSize, episodeId: episode.id, dbQueue: dbQueue)
     }
 
+    private func isEpisodeDownloaded(uuid: String, db: PCDatabase) -> Bool {
+        do {
+            let resultSet = try db.executeQuery("SELECT episodeStatus FROM \(DataManager.episodeTableName) WHERE uuid = ?", values: [uuid])
+            defer { resultSet.close() }
+
+            if resultSet.next() {
+                let status = resultSet.int(forColumn: "episodeStatus")
+                // DownloadStatus.downloaded.rawValue = 3, DownloadStatus.downloadedForStreaming.rawValue = 5
+                return status == 3 || status == 5
+            }
+        } catch {
+            FileLog.shared.addMessage("EpisodeDataManager.isEpisodeDownloaded error: \(error)")
+        }
+        return false
+    }
+
     func saveBulkEpisodeSyncInfo(episodes: [EpisodeBasicData], dbQueue: PCDBQueue) {
         if episodes.count == 0 { return }
 
@@ -498,8 +514,13 @@ class EpisodeDataManager {
                     var fields = [String]()
                     var values = [Any]()
                     if let duration = episode.duration, duration > 0 {
-                        fields.append("duration")
-                        values.append(duration)
+                        // For downloaded episodes, preserve the locally calculated duration from the actual audio file
+                        // over the server's duration, as the server metadata may be incorrect
+                        let isDownloaded = isEpisodeDownloaded(uuid: uuid, db: db)
+                        if !isDownloaded {
+                            fields.append("duration")
+                            values.append(duration)
+                        }
                     }
 
                     if let playingStatus = episode.playingStatus {

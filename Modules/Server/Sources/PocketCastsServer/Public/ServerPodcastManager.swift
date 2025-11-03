@@ -238,7 +238,14 @@ public class ServerPodcastManager: NSObject {
                 episode.downloadUrl = updatedEpisode.downloadUrl
                 episode.fileType = updatedEpisode.fileType
                 episode.sizeInBytes = updatedEpisode.sizeInBytes
-                episode.duration = updatedEpisode.duration
+
+                // For downloaded episodes, preserve the locally calculated duration from the actual audio file
+                // over the server's duration metadata, as the server metadata may be incorrect
+                let isDownloaded = episode.downloaded(pathFinder: DownloadManager.shared) || episode.downloadedForStreaming(pathFinder: DownloadManager.shared)
+                if !isDownloaded {
+                    episode.duration = updatedEpisode.duration
+                }
+
                 episode.publishedDate = updatedEpisode.publishedDate
                 episode.episodeNumber = updatedEpisode.episodeNumber
                 episode.seasonNumber = updatedEpisode.seasonNumber
